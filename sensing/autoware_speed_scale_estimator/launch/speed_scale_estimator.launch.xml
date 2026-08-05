@@ -4,6 +4,8 @@
   <arg name="input_pose_name" default="/localization/pose_estimator/pose"/>
   <arg name="input_velocity_report" default="/vehicle/status/velocity_status"/>
   <arg name="input_imu" default="/sensing/imu/imu_data"/>
+  <arg name="input_ndt_initial_to_result_relative_pose" default="/localization/pose_estimator/initial_to_result_relative_pose"/>
+  <arg name="input_environment_id" default="/localization/environment_adaptor/debug/environment_id"/>
   <arg name="output_scale_factor" default="/sensing/speed_scale_estimator/scale_factor"/>
   <arg name="output_debug_info" default="/sensing/speed_scale_estimator/debug_info"/>
 
@@ -12,6 +14,8 @@
     <remap from="~/input/pose" to="$(var input_pose_name)"/>
     <remap from="~/input/velocity_report" to="$(var input_velocity_report)"/>
     <remap from="~/input/imu" to="$(var input_imu)"/>
+    <remap from="~/input/ndt_initial_to_result_relative_pose" to="$(var input_ndt_initial_to_result_relative_pose)"/>
+    <remap from="~/input/environment_id" to="$(var input_environment_id)"/>
     <remap from="~/output/scale_factor" to="$(var output_scale_factor)"/>
     <remap from="~/output/debug_info" to="$(var output_debug_info)"/>
 

@@ -19,6 +19,7 @@
 
 #include <rcpputils/tl_expected/expected.hpp>
 
+#include <autoware_internal_debug_msgs/msg/int32_stamped.hpp>
 #include <autoware_vehicle_msgs/msg/velocity_report.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <sensor_msgs/msg/imu.hpp>
@@ -30,6 +31,7 @@
 namespace autoware::speed_scale_estimator
 {
 
+using autoware_internal_debug_msgs::msg::Int32Stamped;
 using autoware_vehicle_msgs::msg::VelocityReport;
 using geometry_msgs::msg::PoseStamped;
 using sensor_msgs::msg::Imu;
@@ -41,9 +43,18 @@ public:
 
   [[nodiscard]] double get_update_interval_sec() const;
 
+  /**
+   * @param ndt_corrections NDT initial-to-result relative poses, i.e. the correction NDT applied to
+   *   its initial guess expressed in the initial pose frame. Only used when
+   *   `enable_ndt_stability_check` is set.
+   * @param environment_ids Environment ids published by `environment_adaptor`. Only used when
+   *   `enable_degenerate_environment_check` is set.
+   */
   [[nodiscard]] tl::expected<SpeedScaleEstimatorUpdated, SpeedScaleEstimatorNotUpdated> update(
     const std::vector<PoseStamped> & poses, const std::vector<Imu> & imus,
-    const std::vector<VelocityReport> & velocity_reports);
+    const std::vector<VelocityReport> & velocity_reports,
+    const std::vector<PoseStamped> & ndt_corrections,
+    const std::vector<Int32Stamped> & environment_ids);
 
 private:
   [[nodiscard]] SpeedScaleEstimatorNotUpdated make_not_updated(
@@ -51,11 +62,15 @@ private:
 
   void update_imu_buffer(const std::vector<Imu> & imus);
   void update_velocity_report_buffer(const std::vector<VelocityReport> & velocity_reports);
+  void update_ndt_correction_buffer(const std::vector<PoseStamped> & ndt_corrections);
+  void update_environment_id_buffer(const std::vector<Int32Stamped> & environment_ids);
 
   SpeedScaleEstimatorParameters parameters_;
   std::optional<PoseStamped> previous_pose_;
   std::deque<Imu> imu_buffer_;
   std::deque<VelocityReport> velocity_report_buffer_;
+  std::deque<PoseStamped> ndt_correction_buffer_;
+  std::deque<Int32Stamped> environment_id_buffer_;
   double estimated_speed_scale_factor_ = 1.0;
   double covariance_ = 1.0;
 };

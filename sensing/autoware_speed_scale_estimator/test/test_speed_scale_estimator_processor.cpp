@@ -45,6 +45,11 @@ protected:
     parameters_.max_angular_velocity = 0.0105;
     parameters_.max_speed = 17.0;
     parameters_.min_speed = 6.0;
+    parameters_.enable_ndt_stability_check = true;
+    parameters_.max_ndt_longitudinal_correction = 0.15;
+    parameters_.max_ndt_lateral_correction = 0.15;
+    parameters_.enable_degenerate_environment_check = false;
+    parameters_.allowed_environment_ids = {0};
 
     processor_ = std::make_unique<SpeedScaleEstimatorProcessor>(parameters_);
   }
@@ -78,6 +83,13 @@ protected:
     return msg;
   }
 
+  /// NDT initial-to-result relative pose: x is the longitudinal, y the lateral correction.
+  static PoseStamped::SharedPtr create_ndt_correction_msg(
+    double sec, double longitudinal, double lateral)
+  {
+    return create_pose_msg(sec, longitudinal, lateral);
+  }
+
   SpeedScaleEstimatorParameters parameters_;
   std::unique_ptr<SpeedScaleEstimatorProcessor> processor_;
 };
@@ -88,12 +100,51 @@ TEST_F(SpeedScaleEstimatorProcessorTest, ProcessReturnsWaitingForNextPoseOnFirst
   const std::vector<Imu::ConstSharedPtr> imus = {create_imu_msg(0.0, 0.0)};
   const std::vector<VelocityReport::ConstSharedPtr> velocity_reports = {
     create_velocity_msg(0.0, 5.0)};
+  const std::vector<PoseStamped::ConstSharedPtr> ndt_corrections = {
+    create_ndt_correction_msg(0.0, 0.0, 0.0)};
+  const std::vector<Int32Stamped::ConstSharedPtr> environment_ids;
 
-  const auto result = processor_->process(poses, imus, velocity_reports);
+  const auto result =
+    processor_->process(poses, imus, velocity_reports, ndt_corrections, environment_ids);
 
   EXPECT_FALSE(result.updated);
   ASSERT_FALSE(result.estimation_result);
   EXPECT_EQ(result.estimation_result.error().reason, UpdateFailureReason::WaitingForNextPose);
+}
+
+TEST_F(SpeedScaleEstimatorProcessorTest, MakeDebugInfoReportsNdtCorrectionTooLarge)
+{
+  UpdateFailureContext context;
+  context.ndt_longitudinal_correction = 0.4;
+  context.ndt_longitudinal_correction_threshold = 0.15;
+  context.ndt_lateral_correction = 0.05;
+  context.ndt_lateral_correction_threshold = 0.15;
+
+  SpeedScaleEstimatorProcessResult result;
+  result.updated = false;
+  result.estimation_result = tl::make_unexpected(
+    SpeedScaleEstimatorNotUpdated{UpdateFailureReason::NdtCorrectionTooLarge, context, 1.0});
+
+  const auto debug_info = SpeedScaleEstimatorProcessor::make_debug_info(result, rclcpp::Time(1, 0));
+
+  EXPECT_NE(debug_info.data.find("NDT correction is too large"), std::string::npos);
+  EXPECT_NE(debug_info.data.find("0.400"), std::string::npos);
+}
+
+TEST_F(SpeedScaleEstimatorProcessorTest, MakeDebugInfoReportsDegenerateEnvironment)
+{
+  UpdateFailureContext context;
+  context.environment_id = 2;
+
+  SpeedScaleEstimatorProcessResult result;
+  result.updated = false;
+  result.estimation_result = tl::make_unexpected(
+    SpeedScaleEstimatorNotUpdated{UpdateFailureReason::DegenerateEnvironment, context, 1.0});
+
+  const auto debug_info = SpeedScaleEstimatorProcessor::make_debug_info(result, rclcpp::Time(1, 0));
+
+  EXPECT_NE(debug_info.data.find("Degenerate environment"), std::string::npos);
+  EXPECT_NE(debug_info.data.find("environment_id: 2"), std::string::npos);
 }
 
 TEST_F(SpeedScaleEstimatorProcessorTest, MakeDebugInfoContainsFailureReason)

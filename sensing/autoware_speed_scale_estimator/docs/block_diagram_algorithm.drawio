@@ -25,8 +25,17 @@
                 <mxCell id="sync_imu" value="find_nearest_imu()&#10;timestamp sync&#10;(stamp_diff &lt;= max_stamp_lag)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
                     <mxGeometry x="320" y="250" width="230" height="80" as="geometry"/>
                 </mxCell>
-                <mxCell id="constraint" value="Constraint check&#10;- |ω_imu| &lt;= max_angular_velocity&#10;- min_speed &lt;= v_pose &lt;= max_speed&#10;- |v_wheel| &gt; 0" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
-                    <mxGeometry x="620" y="150" width="260" height="100" as="geometry"/>
+                <mxCell id="in_ndt" value="NDT initial_to_result batch (optional)&#10;rolling buffer (sensor_buffer_duration)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="350" width="200" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="in_env" value="environment_id batch (optional)&#10;rolling buffer (sensor_buffer_duration)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="440" width="200" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="sync_loc" value="find_worst_ndt_correction()&#10;worst |x|, |y| over [t_prev, t_curr]&#10;find_nearest_environment_id()&#10;(stamp_diff &lt;= max_stamp_lag)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
+                    <mxGeometry x="320" y="360" width="230" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="constraint" value="Constraint check&#10;- |ω_imu| &lt;= max_angular_velocity&#10;- min_speed &lt;= v_pose &lt;= max_speed&#10;- |v_wheel| &gt; 0&#10;- NDT correction &lt;= max_ndt_*_correction (opt.)&#10;- environment_id in allowed_environment_ids (opt.)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
+                    <mxGeometry x="620" y="140" width="300" height="150" as="geometry"/>
                 </mxCell>
                 <mxCell id="kf" value="Scalar Kalman Filter&#10;Observation model: z = s * v_wheel&#10;Measurement: z = v_pose&#10;Observation matrix: H = v_wheel&#10;State: s (speed scale factor)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
                     <mxGeometry x="950" y="145" width="260" height="110" as="geometry"/>
@@ -55,6 +64,15 @@
                 <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;entryX=0;entryY=0.75;entryDx=0;entryDy=0;" parent="1" source="sync_imu" target="constraint" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
+                <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" parent="1" source="in_ndt" target="sync_loc" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" parent="1" source="in_env" target="sync_loc" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" parent="1" source="sync_loc" target="constraint" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
                 <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="constraint" target="kf" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
@@ -66,8 +84,8 @@
                 <mxCell id="e9" value="fail" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="constraint" target="out_skip" edge="1">
                     <mxGeometry relative="1" as="geometry">
                         <Array as="points">
-                            <mxPoint x="910" y="200"/>
-                            <mxPoint x="910" y="315"/>
+                            <mxPoint x="935" y="215"/>
+                            <mxPoint x="935" y="315"/>
                         </Array>
                     </mxGeometry>
                 </mxCell>

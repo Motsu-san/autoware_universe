@@ -14,7 +14,9 @@
 
 #include "node.hpp"
 
+#include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace autoware::speed_scale_estimator
 {
@@ -38,13 +40,25 @@ SpeedScaleEstimatorParameters load_parameters(rclcpp::Node * node)
   parameters.max_angular_velocity = node->declare_parameter<double>("max_angular_velocity");
   parameters.max_speed = node->declare_parameter<double>("max_speed");
   parameters.min_speed = node->declare_parameter<double>("min_speed");
+  parameters.enable_ndt_stability_check =
+    node->declare_parameter<bool>("enable_ndt_stability_check");
+  parameters.max_ndt_longitudinal_correction =
+    node->declare_parameter<double>("max_ndt_longitudinal_correction");
+  parameters.max_ndt_lateral_correction =
+    node->declare_parameter<double>("max_ndt_lateral_correction");
+  parameters.enable_degenerate_environment_check =
+    node->declare_parameter<bool>("enable_degenerate_environment_check");
+  parameters.allowed_environment_ids =
+    node->declare_parameter<std::vector<int64_t>>("allowed_environment_ids");
   return parameters;
 }
 
 }  // namespace
 
 SpeedScaleEstimatorNode::SpeedScaleEstimatorNode(const rclcpp::NodeOptions & node_options)
-: Node("speed_scale_estimator", node_options), processor_(load_parameters(this))
+: Node("speed_scale_estimator", node_options),
+  parameters_(load_parameters(this)),
+  processor_(parameters_)
 {
   pub_estimated_speed_scale_factor_ = create_publisher<Float32Stamped>("~/output/scale_factor", 1);
   pub_debug_info_ = create_publisher<StringStamped>("~/output/debug_info", 1);
@@ -55,6 +69,15 @@ SpeedScaleEstimatorNode::SpeedScaleEstimatorNode(const rclcpp::NodeOptions & nod
     this, "~/input/velocity_report", rclcpp::QoS{10});
   sub_imu_ = PollingSubscriber<Imu, All>::create_subscription(this, "~/input/imu", rclcpp::QoS{10});
 
+  if (parameters_.enable_ndt_stability_check) {
+    sub_ndt_correction_ = PollingSubscriber<PoseStamped, All>::create_subscription(
+      this, "~/input/ndt_initial_to_result_relative_pose", rclcpp::QoS{10});
+  }
+  if (parameters_.enable_degenerate_environment_check) {
+    sub_environment_id_ = PollingSubscriber<Int32Stamped, All>::create_subscription(
+      this, "~/input/environment_id", rclcpp::QoS{10});
+  }
+
   timer_ = rclcpp::create_timer(
     this, get_clock(), std::chrono::duration<double>(processor_.get_update_interval_sec()),
     std::bind(&SpeedScaleEstimatorNode::on_timer, this));
@@ -62,8 +85,15 @@ SpeedScaleEstimatorNode::SpeedScaleEstimatorNode(const rclcpp::NodeOptions & nod
 
 void SpeedScaleEstimatorNode::on_timer()
 {
+  const auto ndt_correction_ptrs = sub_ndt_correction_ ? sub_ndt_correction_->take_data()
+                                                       : std::vector<PoseStamped::ConstSharedPtr>{};
+  const auto environment_id_ptrs = sub_environment_id_
+                                     ? sub_environment_id_->take_data()
+                                     : std::vector<Int32Stamped::ConstSharedPtr>{};
+
   const auto result = processor_.process(
-    sub_pose_->take_data(), sub_imu_->take_data(), sub_velocity_report_->take_data());
+    sub_pose_->take_data(), sub_imu_->take_data(), sub_velocity_report_->take_data(),
+    ndt_correction_ptrs, environment_id_ptrs);
 
   const auto now = get_clock()->now();
   pub_debug_info_->publish(processor_.make_debug_info(result, now));

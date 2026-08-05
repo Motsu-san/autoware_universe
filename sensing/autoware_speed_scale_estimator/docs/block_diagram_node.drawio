@@ -16,11 +16,17 @@
                 <mxCell id="in_imu" value="IMU&#10;~/input/imu&#10;sensor_msgs/Imu" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
                     <mxGeometry x="40" y="250" width="200" height="70" as="geometry"/>
                 </mxCell>
-                <mxCell id="node_box" value="speed_scale_estimator_node" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;" parent="1" vertex="1">
-                    <mxGeometry x="300" y="60" width="560" height="280" as="geometry"/>
+                <mxCell id="in_ndt" value="NDT correction (optional)&#10;~/input/ndt_initial_to_result_relative_pose&#10;geometry_msgs/PoseStamped" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="340" width="200" height="80" as="geometry"/>
                 </mxCell>
-                <mxCell id="subs" value="Polling subscribers&#10;pose / velocity_report / imu" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" parent="node_box" vertex="1">
-                    <mxGeometry x="30" y="50" width="160" height="70" as="geometry"/>
+                <mxCell id="in_env" value="Environment id (optional)&#10;~/input/environment_id&#10;autoware_internal_debug_msgs/Int32Stamped" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="440" width="200" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="node_box" value="speed_scale_estimator_node" style="swimlane;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="300" y="60" width="560" height="460" as="geometry"/>
+                </mxCell>
+                <mxCell id="subs" value="Polling subscribers&#10;pose / velocity_report / imu&#10;(+ ndt correction / environment_id,&#10;created only when the matching&#10;constraint is enabled)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" parent="node_box" vertex="1">
+                    <mxGeometry x="30" y="50" width="160" height="130" as="geometry"/>
                 </mxCell>
                 <mxCell id="estimator_ref" value="SpeedScaleEstimatorProcessor&#10;+ SpeedScaleEstimator&#10;(see algorithm diagram)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="node_box" vertex="1">
                     <mxGeometry x="240" y="45" width="280" height="80" as="geometry"/>
@@ -56,6 +62,12 @@
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="in_imu" target="subs" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;entryX=0;entryY=0.75;entryDx=0;entryDy=0;" parent="1" source="in_ndt" target="subs" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;entryX=0;entryY=1;entryDx=0;entryDy=0;" parent="1" source="in_env" target="subs" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="publish" target="out_scale" edge="1">
