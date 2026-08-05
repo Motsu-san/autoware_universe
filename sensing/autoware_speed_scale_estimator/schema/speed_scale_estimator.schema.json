@@ -71,6 +71,36 @@
           "description": "Minimum required pose velocity in m/s. Samples below this value are filtered out to ensure sufficient motion for reliable pose-differentiation-based estimation. Unit is **[m/s]**.",
           "minimum": 0.0,
           "default": 6.0
+        },
+        "enable_ndt_stability_check": {
+          "type": "boolean",
+          "description": "Whether to require NDT scan matching to be stable. When enabled, the node subscribes to the NDT initial-to-result relative pose and rejects samples whose correction is large or whose stamps do not cover the pose interval.",
+          "default": true
+        },
+        "max_ndt_longitudinal_correction": {
+          "type": "number",
+          "description": "Maximum allowed NDT correction along the predicted heading, i.e. the longitudinal component of the initial-to-result relative pose. This is the axis that degrades in degenerate environments and it directly corrupts the pose-differentiation velocity. Only used when `enable_ndt_stability_check` is true. Unit is **[m]**.",
+          "minimum": 0.0,
+          "default": 0.15
+        },
+        "max_ndt_lateral_correction": {
+          "type": "number",
+          "description": "Maximum allowed NDT correction perpendicular to the predicted heading, i.e. the lateral component of the initial-to-result relative pose. Only used when `enable_ndt_stability_check` is true. Unit is **[m]**.",
+          "minimum": 0.0,
+          "default": 0.15
+        },
+        "enable_degenerate_environment_check": {
+          "type": "boolean",
+          "description": "Whether to require the vehicle to be outside a degenerate environment. When enabled, the node subscribes to the environment id published by `environment_adaptor` and skips estimation when the id is not allowed or is unavailable. Disabled by default because `environment_adaptor` is not launched by default and the judgement relies on `degenerate_area` polygons being annotated in the lanelet2 map.",
+          "default": false
+        },
+        "allowed_environment_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "Environment ids for which estimation is allowed. With the default `environment_adaptor` configuration, 0 is a normal environment, 1 is a uniform road and 2 is a feature-poor road. Only used when `enable_degenerate_environment_check` is true.",
+          "default": [0]
         }
       },
       "required": [
@@ -84,7 +114,12 @@
         "measurement_noise_covariance",
         "max_angular_velocity",
         "max_speed",
-        "min_speed"
+        "min_speed",
+        "enable_ndt_stability_check",
+        "max_ndt_longitudinal_correction",
+        "max_ndt_lateral_correction",
+        "enable_degenerate_environment_check",
+        "allowed_environment_ids"
       ],
       "additionalProperties": false
     }

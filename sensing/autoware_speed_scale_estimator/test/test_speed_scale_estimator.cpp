@@ -14,6 +14,7 @@
 
 #include "speed_scale_estimator.hpp"
 
+#include <autoware_internal_debug_msgs/msg/int32_stamped.hpp>
 #include <autoware_vehicle_msgs/msg/velocity_report.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <sensor_msgs/msg/imu.hpp>
@@ -42,9 +43,16 @@ protected:
     parameters_.max_angular_velocity = 0.0105;  // ~0.6 deg/s
     parameters_.max_speed = 17.0;
     parameters_.min_speed = 6.0;
+    parameters_.enable_ndt_stability_check = true;
+    parameters_.max_ndt_longitudinal_correction = 0.15;
+    parameters_.max_ndt_lateral_correction = 0.15;
+    parameters_.enable_degenerate_environment_check = false;
+    parameters_.allowed_environment_ids = {0};
 
-    estimator_ = std::make_unique<SpeedScaleEstimator>(parameters_);
+    reset_estimator();
   }
+
+  void reset_estimator() { estimator_ = std::make_unique<SpeedScaleEstimator>(parameters_); }
 
   static PoseStamped create_pose_msg(double sec, double x, double y)
   {
@@ -55,6 +63,21 @@ protected:
     pose.pose.position.y = y;
     pose.pose.position.z = 0.0;
     return pose;
+  }
+
+  /// NDT initial-to-result relative pose: x is the longitudinal, y the lateral correction.
+  static PoseStamped create_ndt_correction_msg(double sec, double longitudinal, double lateral)
+  {
+    return create_pose_msg(sec, longitudinal, lateral);
+  }
+
+  static Int32Stamped create_environment_id_msg(double sec, int32_t environment_id)
+  {
+    Int32Stamped msg;
+    msg.stamp.sec = static_cast<int32_t>(sec);
+    msg.stamp.nanosec = static_cast<uint32_t>((sec - msg.stamp.sec) * 1e9);
+    msg.data = environment_id;
+    return msg;
   }
 
   static VelocityReport create_velocity_msg(double sec, double velocity)
@@ -90,7 +113,8 @@ TEST_F(SpeedScaleEstimatorTest, EstimationBehaviorTest)
     std::vector<PoseStamped> poses = {create_pose_msg(t, 10.0 * t, 0.0)};
     std::vector<VelocityReport> velocity_reports = {create_velocity_msg(t, 5.0)};
     std::vector<Imu> imus = {create_imu_msg(t, 0.005)};
-    auto result = estimator_->update(poses, imus, velocity_reports);
+    auto result = estimator_->update(
+      poses, imus, velocity_reports, {create_ndt_correction_msg(t, 0.0, 0.0)}, {});
 
     if (result) {
       successful_estimations++;
@@ -108,7 +132,8 @@ TEST_F(SpeedScaleEstimatorTest, InsufficientPoses)
   std::vector<VelocityReport> velocity_reports = {create_velocity_msg(1.0, 5.0)};
   std::vector<Imu> imus = {create_imu_msg(1.0, 0.1)};
 
-  auto result = estimator_->update(poses, imus, velocity_reports);
+  auto result = estimator_->update(
+    poses, imus, velocity_reports, {create_ndt_correction_msg(1.0, 0.0, 0.0)}, {});
   EXPECT_FALSE(result);
   EXPECT_EQ(result.error().reason, UpdateFailureReason::WaitingForNextPose);
 }
@@ -118,13 +143,15 @@ TEST_F(SpeedScaleEstimatorTest, AngularVelocityConstraintViolation)
   std::vector<PoseStamped> poses_t0 = {create_pose_msg(0.0, 0.0, 0.0)};
   std::vector<VelocityReport> velocity_reports_t0 = {create_velocity_msg(0.0, 5.0)};
   std::vector<Imu> imus_t0 = {create_imu_msg(0.0, 0.0)};
-  (void)estimator_->update(poses_t0, imus_t0, velocity_reports_t0);
+  (void)estimator_->update(
+    poses_t0, imus_t0, velocity_reports_t0, {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
 
   std::vector<PoseStamped> poses = {create_pose_msg(0.1, 0.5, 0.0)};
   std::vector<VelocityReport> velocity_reports = {create_velocity_msg(0.1, 5.0)};
   std::vector<Imu> imus = {create_imu_msg(0.1, 0.05)};
 
-  const auto result = estimator_->update(poses, imus, velocity_reports);
+  const auto result = estimator_->update(
+    poses, imus, velocity_reports, {create_ndt_correction_msg(0.1, 0.0, 0.0)}, {});
 
   ASSERT_FALSE(result);
   EXPECT_EQ(result.error().reason, UpdateFailureReason::AngularVelocityTooHigh);
@@ -135,13 +162,15 @@ TEST_F(SpeedScaleEstimatorTest, SpeedConstraintViolation)
   std::vector<PoseStamped> poses_t0 = {create_pose_msg(0.0, 0.0, 0.0)};
   std::vector<VelocityReport> velocity_reports_t0 = {create_velocity_msg(0.0, 5.0)};
   std::vector<Imu> imus_t0 = {create_imu_msg(0.0, 0.0)};
-  (void)estimator_->update(poses_t0, imus_t0, velocity_reports_t0);
+  (void)estimator_->update(
+    poses_t0, imus_t0, velocity_reports_t0, {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
 
   std::vector<PoseStamped> poses = {create_pose_msg(0.1, 0.1, 0.0)};
   std::vector<VelocityReport> velocity_reports = {create_velocity_msg(0.1, 1.0)};
   std::vector<Imu> imus = {create_imu_msg(0.1, 0.005)};
 
-  const auto result = estimator_->update(poses, imus, velocity_reports);
+  const auto result = estimator_->update(
+    poses, imus, velocity_reports, {create_ndt_correction_msg(0.1, 0.0, 0.0)}, {});
 
   ASSERT_FALSE(result);
   EXPECT_EQ(result.error().reason, UpdateFailureReason::VelocityTooLow);
@@ -152,13 +181,15 @@ TEST_F(SpeedScaleEstimatorTest, VelocityReportTimestampMismatch)
   std::vector<PoseStamped> poses_t0 = {create_pose_msg(0.0, 0.0, 0.0)};
   std::vector<VelocityReport> velocity_reports_t0 = {create_velocity_msg(2.0, 5.0)};
   std::vector<Imu> imus_t0 = {create_imu_msg(0.0, 0.0)};
-  (void)estimator_->update(poses_t0, imus_t0, velocity_reports_t0);
+  (void)estimator_->update(
+    poses_t0, imus_t0, velocity_reports_t0, {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
 
   std::vector<PoseStamped> poses = {create_pose_msg(0.2, 2.0, 0.0)};
   std::vector<VelocityReport> velocity_reports = {create_velocity_msg(2.0, 5.0)};
   std::vector<Imu> imus = {create_imu_msg(0.2, 0.0)};
 
-  const auto result = estimator_->update(poses, imus, velocity_reports);
+  const auto result = estimator_->update(
+    poses, imus, velocity_reports, {create_ndt_correction_msg(0.2, 0.0, 0.0)}, {});
 
   ASSERT_FALSE(result);
   EXPECT_EQ(result.error().reason, UpdateFailureReason::VelocityReportTimestampMismatch);
@@ -169,13 +200,15 @@ TEST_F(SpeedScaleEstimatorTest, VelocityReportTimestampOffsetWithinTolerance)
   std::vector<PoseStamped> poses_t0 = {create_pose_msg(0.0, 0.0, 0.0)};
   std::vector<VelocityReport> velocity_reports_t0 = {create_velocity_msg(0.0, 5.0)};
   std::vector<Imu> imus_t0 = {create_imu_msg(0.0, 0.0)};
-  (void)estimator_->update(poses_t0, imus_t0, velocity_reports_t0);
+  (void)estimator_->update(
+    poses_t0, imus_t0, velocity_reports_t0, {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
 
   std::vector<PoseStamped> poses = {create_pose_msg(0.2, 2.0, 0.0)};
   std::vector<VelocityReport> velocity_reports = {create_velocity_msg(0.344, 5.0)};
   std::vector<Imu> imus = {create_imu_msg(0.344, 0.005)};
 
-  const auto result = estimator_->update(poses, imus, velocity_reports);
+  const auto result = estimator_->update(
+    poses, imus, velocity_reports, {create_ndt_correction_msg(0.2, 0.0, 0.0)}, {});
 
   ASSERT_TRUE(result);
 }
@@ -185,13 +218,15 @@ TEST_F(SpeedScaleEstimatorTest, PoseLagWithinTolerance)
   std::vector<PoseStamped> poses_t0 = {create_pose_msg(0.0, 0.0, 0.0)};
   std::vector<VelocityReport> velocity_reports_t0 = {create_velocity_msg(0.0, 5.0)};
   std::vector<Imu> imus_t0 = {create_imu_msg(0.0, 0.0)};
-  (void)estimator_->update(poses_t0, imus_t0, velocity_reports_t0);
+  (void)estimator_->update(
+    poses_t0, imus_t0, velocity_reports_t0, {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
 
   std::vector<PoseStamped> poses = {create_pose_msg(0.2, 2.0, 0.0)};
   std::vector<VelocityReport> velocity_reports = {create_velocity_msg(0.2, 5.0)};
   std::vector<Imu> imus = {create_imu_msg(0.2, 0.005)};
 
-  const auto result = estimator_->update(poses, imus, velocity_reports);
+  const auto result = estimator_->update(
+    poses, imus, velocity_reports, {create_ndt_correction_msg(0.2, 0.0, 0.0)}, {});
 
   ASSERT_TRUE(result);
 }
@@ -201,13 +236,15 @@ TEST_F(SpeedScaleEstimatorTest, SensorBufferRetentionAcrossUpdates)
   std::vector<PoseStamped> poses_t0 = {create_pose_msg(0.0, 0.0, 0.0)};
   std::vector<VelocityReport> velocity_reports_t0 = {create_velocity_msg(0.0, 5.0)};
   std::vector<Imu> imus_t0 = {create_imu_msg(0.0, 0.0)};
-  (void)estimator_->update(poses_t0, imus_t0, velocity_reports_t0);
+  (void)estimator_->update(
+    poses_t0, imus_t0, velocity_reports_t0, {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
 
   std::vector<PoseStamped> poses = {create_pose_msg(0.2, 2.0, 0.0)};
   const std::vector<VelocityReport> empty_velocity;
   const std::vector<Imu> empty_imu;
 
-  const auto result = estimator_->update(poses, empty_imu, empty_velocity);
+  const auto result = estimator_->update(
+    poses, empty_imu, empty_velocity, {create_ndt_correction_msg(0.2, 0.0, 0.0)}, {});
 
   ASSERT_TRUE(result);
 }
@@ -218,9 +255,195 @@ TEST_F(SpeedScaleEstimatorTest, EmptyDataHandling)
   std::vector<VelocityReport> empty_velocity;
   std::vector<Imu> empty_imu;
 
-  auto result = estimator_->update(poses, empty_imu, empty_velocity);
+  auto result = estimator_->update(poses, empty_imu, empty_velocity, {}, {});
   EXPECT_FALSE(result);
   EXPECT_EQ(result.error().reason, UpdateFailureReason::ImuEmpty);
+}
+
+// --- NDT scan matching stability gate ---
+
+TEST_F(SpeedScaleEstimatorTest, NdtLongitudinalCorrectionTooLarge)
+{
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 5.0)},
+    {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.2, 2.0, 0.0)}, {create_imu_msg(0.2, 0.005)}, {create_velocity_msg(0.2, 5.0)},
+    {create_ndt_correction_msg(0.2, 0.2, 0.0)}, {});
+
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().reason, UpdateFailureReason::NdtCorrectionTooLarge);
+  EXPECT_DOUBLE_EQ(result.error().context.ndt_longitudinal_correction, 0.2);
+}
+
+TEST_F(SpeedScaleEstimatorTest, NdtLateralCorrectionTooLarge)
+{
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 5.0)},
+    {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.2, 2.0, 0.0)}, {create_imu_msg(0.2, 0.005)}, {create_velocity_msg(0.2, 5.0)},
+    {create_ndt_correction_msg(0.2, 0.0, -0.2)}, {});
+
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().reason, UpdateFailureReason::NdtCorrectionTooLarge);
+  EXPECT_DOUBLE_EQ(result.error().context.ndt_lateral_correction, 0.2);
+}
+
+TEST_F(SpeedScaleEstimatorTest, NdtCorrectionUsesWorstSampleWithinPoseInterval)
+{
+  // Both ends of the interval look clean; only a sample in between exceeds the threshold.
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 5.0)},
+    {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.2, 2.0, 0.0)}, {create_imu_msg(0.2, 0.005)}, {create_velocity_msg(0.2, 5.0)},
+    {create_ndt_correction_msg(0.1, 0.5, 0.0), create_ndt_correction_msg(0.2, 0.0, 0.0)}, {});
+
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().reason, UpdateFailureReason::NdtCorrectionTooLarge);
+  EXPECT_DOUBLE_EQ(result.error().context.ndt_longitudinal_correction, 0.5);
+}
+
+TEST_F(SpeedScaleEstimatorTest, NdtStabilityUnavailableWhenBufferEmpty)
+{
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 5.0)},
+    {}, {});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.2, 2.0, 0.0)}, {create_imu_msg(0.2, 0.005)}, {create_velocity_msg(0.2, 5.0)},
+    {}, {});
+
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().reason, UpdateFailureReason::NdtStabilityUnavailable);
+}
+
+TEST_F(SpeedScaleEstimatorTest, NdtStabilityUnavailableWhenIntervalNotCovered)
+{
+  // Only the far end of the interval has a sample, so the window is not actually covered.
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 5.0)},
+    {}, {});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.4, 4.0, 0.0)}, {create_imu_msg(0.4, 0.005)}, {create_velocity_msg(0.4, 5.0)},
+    {create_ndt_correction_msg(0.4, 0.0, 0.0)}, {});
+
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().reason, UpdateFailureReason::NdtStabilityUnavailable);
+  EXPECT_DOUBLE_EQ(result.error().context.stamp_diff_threshold, parameters_.max_stamp_lag);
+}
+
+TEST_F(SpeedScaleEstimatorTest, NdtStabilityCheckDisabledIgnoresLargeCorrection)
+{
+  parameters_.enable_ndt_stability_check = false;
+  reset_estimator();
+
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 5.0)},
+    {create_ndt_correction_msg(0.0, 10.0, 10.0)}, {});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.2, 2.0, 0.0)}, {create_imu_msg(0.2, 0.005)}, {create_velocity_msg(0.2, 5.0)},
+    {create_ndt_correction_msg(0.2, 10.0, 10.0)}, {});
+
+  ASSERT_TRUE(result);
+  EXPECT_DOUBLE_EQ(result.value().ndt_longitudinal_correction, 0.0);
+}
+
+// --- Degenerate environment gate ---
+
+TEST_F(SpeedScaleEstimatorTest, DegenerateEnvironmentRejected)
+{
+  parameters_.enable_degenerate_environment_check = true;
+
+  for (const int32_t degenerate_id : {1, 2}) {
+    reset_estimator();
+
+    (void)estimator_->update(
+      {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 5.0)},
+      {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {create_environment_id_msg(0.0, 0)});
+
+    const auto result = estimator_->update(
+      {create_pose_msg(0.2, 2.0, 0.0)}, {create_imu_msg(0.2, 0.005)},
+      {create_velocity_msg(0.2, 5.0)}, {create_ndt_correction_msg(0.2, 0.0, 0.0)},
+      {create_environment_id_msg(0.2, degenerate_id)});
+
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().reason, UpdateFailureReason::DegenerateEnvironment);
+    EXPECT_EQ(result.error().context.environment_id, degenerate_id);
+  }
+}
+
+TEST_F(SpeedScaleEstimatorTest, AllowedEnvironmentAccepted)
+{
+  parameters_.enable_degenerate_environment_check = true;
+  reset_estimator();
+
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 5.0)},
+    {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {create_environment_id_msg(0.0, 0)});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.2, 2.0, 0.0)}, {create_imu_msg(0.2, 0.005)}, {create_velocity_msg(0.2, 5.0)},
+    {create_ndt_correction_msg(0.2, 0.0, 0.0)}, {create_environment_id_msg(0.2, 0)});
+
+  ASSERT_TRUE(result);
+  EXPECT_EQ(result.value().environment_id, 0);
+}
+
+TEST_F(SpeedScaleEstimatorTest, EnvironmentIdUnavailableWhenNeverReceived)
+{
+  parameters_.enable_degenerate_environment_check = true;
+  reset_estimator();
+
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 5.0)},
+    {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.2, 2.0, 0.0)}, {create_imu_msg(0.2, 0.005)}, {create_velocity_msg(0.2, 5.0)},
+    {create_ndt_correction_msg(0.2, 0.0, 0.0)}, {});
+
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().reason, UpdateFailureReason::EnvironmentIdUnavailable);
+}
+
+TEST_F(SpeedScaleEstimatorTest, StaleEnvironmentIdSkipsEstimation)
+{
+  parameters_.enable_degenerate_environment_check = true;
+  reset_estimator();
+
+  (void)estimator_->update(
+    {create_pose_msg(1.0, 0.0, 0.0)}, {create_imu_msg(1.0, 0.0)}, {create_velocity_msg(1.0, 5.0)},
+    {create_ndt_correction_msg(1.0, 0.0, 0.0)}, {});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(1.5, 5.0, 0.0)}, {create_imu_msg(1.5, 0.005)}, {create_velocity_msg(1.5, 5.0)},
+    {create_ndt_correction_msg(1.5, 0.0, 0.0)}, {create_environment_id_msg(1.0, 0)});
+
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().reason, UpdateFailureReason::EnvironmentIdUnavailable);
+  EXPECT_DOUBLE_EQ(result.error().context.stamp_diff_threshold, parameters_.max_stamp_lag);
+}
+
+TEST_F(SpeedScaleEstimatorTest, DegenerateEnvironmentCheckDisabledIgnoresEnvironmentId)
+{
+  // Mirrors the default configuration, where environment_adaptor is not launched.
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 5.0)},
+    {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {create_environment_id_msg(0.0, 1)});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.2, 2.0, 0.0)}, {create_imu_msg(0.2, 0.005)}, {create_velocity_msg(0.2, 5.0)},
+    {create_ndt_correction_msg(0.2, 0.0, 0.0)}, {create_environment_id_msg(0.2, 1)});
+
+  ASSERT_TRUE(result);
+  EXPECT_EQ(result.value().environment_id, 0);
 }
 
 }  // namespace autoware::speed_scale_estimator

@@ -20,6 +20,7 @@
 #include <rclcpp/time.hpp>
 
 #include <autoware_internal_debug_msgs/msg/float32_stamped.hpp>
+#include <autoware_internal_debug_msgs/msg/int32_stamped.hpp>
 #include <autoware_internal_debug_msgs/msg/string_stamped.hpp>
 #include <autoware_vehicle_msgs/msg/velocity_report.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -31,6 +32,7 @@ namespace autoware::speed_scale_estimator
 {
 
 using autoware_internal_debug_msgs::msg::Float32Stamped;
+using autoware_internal_debug_msgs::msg::Int32Stamped;
 using autoware_internal_debug_msgs::msg::StringStamped;
 using autoware_vehicle_msgs::msg::VelocityReport;
 using geometry_msgs::msg::PoseStamped;
@@ -52,7 +54,9 @@ public:
   [[nodiscard]] SpeedScaleEstimatorProcessResult process(
     const std::vector<PoseStamped::ConstSharedPtr> & pose_ptrs,
     const std::vector<Imu::ConstSharedPtr> & imu_ptrs,
-    const std::vector<VelocityReport::ConstSharedPtr> & velocity_report_ptrs);
+    const std::vector<VelocityReport::ConstSharedPtr> & velocity_report_ptrs,
+    const std::vector<PoseStamped::ConstSharedPtr> & ndt_correction_ptrs,
+    const std::vector<Int32Stamped::ConstSharedPtr> & environment_id_ptrs);
 
   [[nodiscard]] static StringStamped make_debug_info(
     const SpeedScaleEstimatorProcessResult & result, const rclcpp::Time & stamp);

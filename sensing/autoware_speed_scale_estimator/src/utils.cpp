@@ -14,6 +14,7 @@
 
 #include "utils.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -88,6 +89,87 @@ std::optional<NearestVelocityReportSample> find_nearest_velocity_report(
   NearestVelocityReportSample sample;
   sample.longitudinal_velocity = nearest_velocity_report->longitudinal_velocity;
   sample.stamp_diff = min_stamp_diff;
+  return sample;
+}
+
+std::optional<NearestEnvironmentIdSample> find_nearest_environment_id(
+  const std::vector<Int32Stamped> & environment_ids, const rclcpp::Time & target_time)
+{
+  if (environment_ids.empty()) {
+    return std::nullopt;
+  }
+
+  const Int32Stamped * nearest_environment_id = &environment_ids.front();
+  double min_stamp_diff =
+    std::abs((rclcpp::Time(nearest_environment_id->stamp) - target_time).seconds());
+
+  for (const auto & environment_id : environment_ids) {
+    const double stamp_diff =
+      std::abs((rclcpp::Time(environment_id.stamp) - target_time).seconds());
+    if (stamp_diff < min_stamp_diff) {
+      min_stamp_diff = stamp_diff;
+      nearest_environment_id = &environment_id;
+    }
+  }
+
+  NearestEnvironmentIdSample sample;
+  sample.environment_id = nearest_environment_id->data;
+  sample.stamp_diff = min_stamp_diff;
+  return sample;
+}
+
+std::optional<WorstNdtCorrectionSample> find_worst_ndt_correction(
+  const std::vector<PoseStamped> & ndt_corrections, const rclcpp::Time & begin_time,
+  const rclcpp::Time & end_time)
+{
+  if (ndt_corrections.empty()) {
+    return std::nullopt;
+  }
+
+  const PoseStamped * nearest_to_begin = &ndt_corrections.front();
+  const PoseStamped * nearest_to_end = &ndt_corrections.front();
+  double min_begin_stamp_diff =
+    std::abs((rclcpp::Time(nearest_to_begin->header.stamp) - begin_time).seconds());
+  double min_end_stamp_diff =
+    std::abs((rclcpp::Time(nearest_to_end->header.stamp) - end_time).seconds());
+
+  double worst_longitudinal = 0.0;
+  double worst_lateral = 0.0;
+
+  for (const auto & ndt_correction : ndt_corrections) {
+    const rclcpp::Time stamp(ndt_correction.header.stamp);
+
+    const double begin_stamp_diff = std::abs((stamp - begin_time).seconds());
+    if (begin_stamp_diff < min_begin_stamp_diff) {
+      min_begin_stamp_diff = begin_stamp_diff;
+      nearest_to_begin = &ndt_correction;
+    }
+
+    const double end_stamp_diff = std::abs((stamp - end_time).seconds());
+    if (end_stamp_diff < min_end_stamp_diff) {
+      min_end_stamp_diff = end_stamp_diff;
+      nearest_to_end = &ndt_correction;
+    }
+
+    if (stamp < begin_time || end_time < stamp) {
+      continue;
+    }
+    worst_longitudinal = std::max(worst_longitudinal, std::abs(ndt_correction.pose.position.x));
+    worst_lateral = std::max(worst_lateral, std::abs(ndt_correction.pose.position.y));
+  }
+
+  // Both ends contribute to the pose velocity, so make sure they are always taken into account even
+  // when their stamps fall marginally outside the window.
+  for (const auto * endpoint : {nearest_to_begin, nearest_to_end}) {
+    worst_longitudinal = std::max(worst_longitudinal, std::abs(endpoint->pose.position.x));
+    worst_lateral = std::max(worst_lateral, std::abs(endpoint->pose.position.y));
+  }
+
+  WorstNdtCorrectionSample sample;
+  sample.longitudinal = worst_longitudinal;
+  sample.lateral = worst_lateral;
+  sample.begin_stamp_diff = min_begin_stamp_diff;
+  sample.end_stamp_diff = min_end_stamp_diff;
   return sample;
 }
 

@@ -15,6 +15,9 @@
 #ifndef STRUCTS_HPP_
 #define STRUCTS_HPP_
 
+#include <cstdint>
+#include <vector>
+
 namespace autoware::speed_scale_estimator
 {
 
@@ -31,6 +34,11 @@ struct SpeedScaleEstimatorParameters
   double max_angular_velocity{};
   double max_speed{};
   double min_speed{};
+  bool enable_ndt_stability_check{};
+  double max_ndt_longitudinal_correction{};
+  double max_ndt_lateral_correction{};
+  bool enable_degenerate_environment_check{};
+  std::vector<int64_t> allowed_environment_ids{};
 };
 
 enum class UpdateFailureReason {
@@ -45,6 +53,10 @@ enum class UpdateFailureReason {
   VelocityTooHigh,
   VelocityTooLow,
   VelocityReportTooSmall,
+  NdtStabilityUnavailable,
+  NdtCorrectionTooLarge,
+  EnvironmentIdUnavailable,
+  DegenerateEnvironment,
 };
 
 struct UpdateFailureContext
@@ -57,6 +69,11 @@ struct UpdateFailureContext
   double max_angular_velocity = 0.0;
   double velocity = 0.0;
   double velocity_threshold = 0.0;
+  double ndt_longitudinal_correction = 0.0;
+  double ndt_lateral_correction = 0.0;
+  double ndt_longitudinal_correction_threshold = 0.0;
+  double ndt_lateral_correction_threshold = 0.0;
+  int32_t environment_id = 0;
 };
 
 struct SpeedScaleEstimatorUpdated
@@ -67,6 +84,9 @@ struct SpeedScaleEstimatorUpdated
   double velocity_from_wheel = 0.0;
   double kalman_gain = 0.0;
   double time_diff = 0.0;
+  double ndt_longitudinal_correction = 0.0;
+  double ndt_lateral_correction = 0.0;
+  int32_t environment_id = 0;
 };
 
 struct SpeedScaleEstimatorNotUpdated

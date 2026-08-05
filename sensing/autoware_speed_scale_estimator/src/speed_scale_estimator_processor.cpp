@@ -56,6 +56,17 @@ std::vector<VelocityReport> to_messages(
   return velocity_reports;
 }
 
+std::vector<Int32Stamped> to_messages(
+  const std::vector<Int32Stamped::ConstSharedPtr> & environment_id_ptrs)
+{
+  std::vector<Int32Stamped> environment_ids;
+  environment_ids.reserve(environment_id_ptrs.size());
+  for (const auto & environment_id_ptr : environment_id_ptrs) {
+    environment_ids.push_back(*environment_id_ptr);
+  }
+  return environment_ids;
+}
+
 std::string failure_reason_to_string(
   const UpdateFailureReason reason, const UpdateFailureContext & context)
 {
@@ -95,6 +106,22 @@ std::string failure_reason_to_string(
         context.velocity_threshold);
     case UpdateFailureReason::VelocityReportTooSmall:
       return fmt::format("Wheel velocity is too small: {:.3f}", context.velocity);
+    case UpdateFailureReason::NdtStabilityUnavailable:
+      return fmt::format(
+        "NDT correction does not cover the pose interval, stamp_diff: {:.3f}, threshold: {:.3f}",
+        context.stamp_diff, context.stamp_diff_threshold);
+    case UpdateFailureReason::NdtCorrectionTooLarge:
+      return fmt::format(
+        "NDT correction is too large, longitudinal: {:.3f} (threshold: {:.3f}), lateral: {:.3f} "
+        "(threshold: {:.3f})",
+        context.ndt_longitudinal_correction, context.ndt_longitudinal_correction_threshold,
+        context.ndt_lateral_correction, context.ndt_lateral_correction_threshold);
+    case UpdateFailureReason::EnvironmentIdUnavailable:
+      return fmt::format(
+        "Environment id is unavailable, stamp_diff: {:.3f}, threshold: {:.3f}", context.stamp_diff,
+        context.stamp_diff_threshold);
+    case UpdateFailureReason::DegenerateEnvironment:
+      return fmt::format("Degenerate environment, environment_id: {}", context.environment_id);
     default:
       return "Unknown failure reason";
   }
@@ -116,11 +143,14 @@ double SpeedScaleEstimatorProcessor::get_update_interval_sec() const
 SpeedScaleEstimatorProcessResult SpeedScaleEstimatorProcessor::process(
   const std::vector<PoseStamped::ConstSharedPtr> & pose_ptrs,
   const std::vector<Imu::ConstSharedPtr> & imu_ptrs,
-  const std::vector<VelocityReport::ConstSharedPtr> & velocity_report_ptrs)
+  const std::vector<VelocityReport::ConstSharedPtr> & velocity_report_ptrs,
+  const std::vector<PoseStamped::ConstSharedPtr> & ndt_correction_ptrs,
+  const std::vector<Int32Stamped::ConstSharedPtr> & environment_id_ptrs)
 {
   SpeedScaleEstimatorProcessResult result;
   result.estimation_result = speed_scale_estimator_.update(
-    to_messages(pose_ptrs), to_messages(imu_ptrs), to_messages(velocity_report_ptrs));
+    to_messages(pose_ptrs), to_messages(imu_ptrs), to_messages(velocity_report_ptrs),
+    to_messages(ndt_correction_ptrs), to_messages(environment_id_ptrs));
   result.updated = result.estimation_result.has_value();
   return result;
 }
@@ -141,9 +171,11 @@ StringStamped SpeedScaleEstimatorProcessor::make_debug_info(
     const auto & updated = result.estimation_result.value();
     debug_info.data = fmt::format(
       "Updated:\nEstimated speed scale factor: {}\nStd. dev.: {}\nVelocity from pose: "
-      "{}\nVelocity from wheel: {}\nKalman gain: {}",
+      "{}\nVelocity from wheel: {}\nKalman gain: {}\nNDT correction (longitudinal, lateral): ({}, "
+      "{})\nEnvironment id: {}",
       updated.estimated_speed_scale_factor, std::sqrt(updated.covariance),
-      updated.velocity_from_pose, updated.velocity_from_wheel, updated.kalman_gain);
+      updated.velocity_from_pose, updated.velocity_from_wheel, updated.kalman_gain,
+      updated.ndt_longitudinal_correction, updated.ndt_lateral_correction, updated.environment_id);
   }
 
   return debug_info;

@@ -22,6 +22,7 @@
 #include <rclcpp/subscription.hpp>
 
 #include <autoware_internal_debug_msgs/msg/float32_stamped.hpp>
+#include <autoware_internal_debug_msgs/msg/int32_stamped.hpp>
 #include <autoware_internal_debug_msgs/msg/string_stamped.hpp>
 #include <autoware_vehicle_msgs/msg/velocity_report.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -33,6 +34,7 @@
 namespace autoware::speed_scale_estimator
 {
 using autoware_internal_debug_msgs::msg::Float32Stamped;
+using autoware_internal_debug_msgs::msg::Int32Stamped;
 using autoware_internal_debug_msgs::msg::StringStamped;
 using autoware_utils_rclcpp::InterProcessPollingSubscriber;
 using autoware_utils_rclcpp::polling_policy::All;
@@ -52,6 +54,8 @@ public:
   explicit SpeedScaleEstimatorNode(const rclcpp::NodeOptions & node_options);
 
 private:
+  // Declared before processor_ so that it is initialized first and can gate subscription creation.
+  SpeedScaleEstimatorParameters parameters_;
   SpeedScaleEstimatorProcessor processor_;
 
   rclcpp::Publisher<Float32Stamped>::SharedPtr pub_estimated_speed_scale_factor_;
@@ -60,6 +64,9 @@ private:
   PollingSubscriber<PoseStamped, All>::SharedPtr sub_pose_;
   PollingSubscriber<VelocityReport, All>::SharedPtr sub_velocity_report_;
   PollingSubscriber<Imu, All>::SharedPtr sub_imu_;
+  // Created only when the corresponding gate is enabled; left null otherwise.
+  PollingSubscriber<PoseStamped, All>::SharedPtr sub_ndt_correction_;
+  PollingSubscriber<Int32Stamped, All>::SharedPtr sub_environment_id_;
 
   rclcpp::TimerBase::SharedPtr timer_;
 
