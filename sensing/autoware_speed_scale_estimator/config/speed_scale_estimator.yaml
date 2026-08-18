@@ -14,7 +14,7 @@
     # NDT scan matching stability
     enable_ndt_stability_check: true
     max_ndt_longitudinal_correction: 0.15 # [m] NDT correction along the predicted heading
-    max_ndt_lateral_correction: 0.15 # [m] NDT correction perpendicular to the predicted heading
+    max_ndt_lateral_correction: 0.25 # [m] NDT correction perpendicular to the predicted heading
     # Degenerate environment (requires environment_adaptor, which is not launched by default)
     enable_degenerate_environment_check: true
     allowed_environment_ids: [0] # 0: normal, 1: uniform_road, 2: feature_poor_road
