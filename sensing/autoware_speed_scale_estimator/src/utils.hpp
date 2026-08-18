@@ -68,6 +68,19 @@ struct WorstNdtCorrectionSample
 
 [[nodiscard]] double calc_time_diff(const PoseStamped & pose_a, const PoseStamped & pose_b);
 
+/**
+ * @brief Longitudinal velocity implied by two consecutive poses.
+ *
+ * The displacement is projected onto the body longitudinal axis rather than reduced to its norm.
+ * The norm is non-negative, so it turns pose noise perpendicular to the travel direction into a
+ * systematic inflation of sigma_perp^2 / (2 d) that the Kalman filter cannot average away; the
+ * projection is linear in the position error and therefore unbiased. It is also the quantity
+ * VelocityReport reports, i.e. the speed along the body x-axis.
+ *
+ * The result is signed: reverse motion yields a negative value, which the min_speed constraint
+ * rejects. The vertical component is included, so on a slope this is the speed along the road
+ * surface, matching wheel-derived velocity.
+ */
 [[nodiscard]] double calc_pose_velocity(const PoseStamped & pose_a, const PoseStamped & pose_b);
 
 [[nodiscard]] std::optional<NearestImuSample> find_nearest_imu(

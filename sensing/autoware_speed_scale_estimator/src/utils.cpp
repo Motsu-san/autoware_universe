@@ -14,13 +14,28 @@
 
 #include "utils.hpp"
 
+#include <geometry_msgs/msg/quaternion.hpp>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <vector>
 
 namespace autoware::speed_scale_estimator
 {
+namespace
+{
+
+/// Body x-axis of a pose, expressed in the frame the pose is given in.
+std::array<double, 3> body_x_axis(const geometry_msgs::msg::Quaternion & q)
+{
+  return {
+    1.0 - 2.0 * (q.y * q.y + q.z * q.z), 2.0 * (q.x * q.y + q.w * q.z),
+    2.0 * (q.x * q.z - q.w * q.y)};
+}
+
+}  // namespace
 
 double calc_time_diff(const PoseStamped & pose_a, const PoseStamped & pose_b)
 {
@@ -34,11 +49,33 @@ double calc_pose_velocity(const PoseStamped & pose_a, const PoseStamped & pose_b
     return 0.0;
   }
 
+  // Project the displacement onto the body longitudinal axis rather than taking its norm. The norm
+  // is non-negative, so pose noise perpendicular to the travel direction inflates it by
+  // sigma_perp^2 / (2 d) irrespective of sign, and the Kalman filter cannot average that away. The
+  // projection is linear in the position error, so a zero-mean pose error stays zero-mean. It also
+  // matches what VelocityReport measures (speed along the body x-axis) and keeps the sign, so
+  // reverse motion is rejected by the min_speed gate instead of driving the scale factor negative.
+  const auto axis_a = body_x_axis(pose_a.pose.orientation);
+  const auto axis_b = body_x_axis(pose_b.pose.orientation);
+  double ux = axis_a[0] + axis_b[0];
+  double uy = axis_a[1] + axis_b[1];
+  double uz = axis_a[2] + axis_b[2];
+  const double u_norm = std::sqrt(ux * ux + uy * uy + uz * uz);
+  if (u_norm < std::numeric_limits<double>::epsilon()) {
+    return 0.0;  // degenerate: the two headings oppose each other
+  }
+  ux /= u_norm;
+  uy /= u_norm;
+  uz /= u_norm;
+
+  // The vertical component is kept so that the result is the speed along the road surface on a
+  // slope, which is what the wheel-derived velocity reports. Dropping it would make the scale
+  // factor absorb an average cos(gradient) over the estimation route.
   const double dx = pose_b.pose.position.x - pose_a.pose.position.x;
   const double dy = pose_b.pose.position.y - pose_a.pose.position.y;
   const double dz = pose_b.pose.position.z - pose_a.pose.position.z;
 
-  return std::sqrt(dx * dx + dy * dy + dz * dz) / dt;
+  return (dx * ux + dy * uy + dz * uz) / dt;
 }
 
 std::optional<NearestImuSample> find_nearest_imu(

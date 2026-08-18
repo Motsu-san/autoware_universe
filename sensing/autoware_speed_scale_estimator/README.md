@@ -42,11 +42,21 @@ The speed scale estimation follows these steps:
 
 ### 2. Pose Velocity Calculation
 
-Computes pose velocity from the previous and current poses:
+Computes pose velocity by projecting the displacement between the previous and current poses onto the body longitudinal axis:
 
 $$
-v_{pose} = \frac{\| \Delta \mathbf{p} \|}{\Delta t}
+v_{pose} = \frac{\Delta \mathbf{p} \cdot \hat{\mathbf{u}}}{\Delta t}, \quad \hat{\mathbf{u}} = \frac{\hat{\mathbf{u}}_{prev} + \hat{\mathbf{u}}_{curr}}{\| \hat{\mathbf{u}}_{prev} + \hat{\mathbf{u}}_{curr} \|}
 $$
+
+where $\hat{\mathbf{u}}_i$ is the body x-axis of pose $i$. The two are averaged so that the axis stays meaningful if `max_angular_velocity` is ever relaxed; under the default gate the two differ by only ~3 mrad.
+
+The projection is used instead of the displacement norm $\| \Delta \mathbf{p} \|$ for three reasons:
+
+- **The norm is biased.** It is non-negative, so pose noise perpendicular to the travel direction inflates it regardless of sign: $E[\| \Delta \mathbf{p} \|] \approx d + \sigma_\perp^2 / (2d)$. That is a systematic error, so the Kalman filter cannot average it away, and its relative size $\sigma_\perp^2 / (2d^2)$ grows as the baseline shortens — worst exactly at `min_speed`. The projection is linear in the position error, so a zero-mean pose error stays zero-mean, and the residual error becomes $\varepsilon^2/2$ in the orientation error $\varepsilon$, which does not depend on $d$.
+- **It matches the observation model.** `VelocityReport.longitudinal_velocity` is the speed along the body x-axis, so projecting onto the same axis makes $z = x \cdot v_{wheel}$ exact rather than approximate up to the side-slip angle.
+- **It keeps the sign.** The wheel velocity report is signed. A non-negative $v_{pose}$ would pair a positive observation with a negative $H$ during reverse motion and drive the scale factor negative; a signed $v_{pose}$ is rejected by the `min_speed` constraint instead.
+
+All three components of $\Delta \mathbf{p}$ including the vertical one participate, so on a slope this is the speed along the road surface — the same quantity the wheels measure. Reducing this to a horizontal 2D displacement would make the scale factor absorb an average $\cos(\text{gradient})$ over the estimation route (0.12 % on a 5 % grade, 0.50 % on a 10 % grade) and make the estimate route-dependent.
 
 If the time difference between the two poses exceeds `max_pose_lag`, the previous pose is reset and estimation is skipped.
 
@@ -72,7 +82,7 @@ Estimation is performed only when all of the following constraints are satisfied
 
 - **Speed constraints (pose velocity)** — $v_{min} \leq v_{pose} \leq v_{max}$
 
-  Default $v_{min} = 6.0\ \mathrm{m/s}$ rejects low-speed samples where pose-differentiation SNR is poor: at short $\Delta t$, displacement $\|\Delta \mathbf{p}\|$ becomes comparable to localization pose noise (e.g. NDT jitter), so relative error in $v_{pose} = \|\Delta \mathbf{p}\| / \Delta t$ grows and corrupts the scale-factor observation $z = v_{pose}$. Wheel speed reports also tend to have larger relative uncertainty near standstill or creep. In practice, sub-6 m/s segments are often urban and involve frequent acceleration/deceleration, which further degrades consistency between pose-derived and wheel-reported velocity. Default $v_{max} = 17.0\ \mathrm{m/s}$ filters out extreme speeds. Together with $\omega_{max}$, estimation runs mainly on moderate-speed, near-straight segments (~22 km/h and above).
+  Default $v_{min} = 6.0\ \mathrm{m/s}$ rejects low-speed samples where pose-differentiation SNR is poor: at short $\Delta t$, the displacement $\Delta \mathbf{p}$ becomes comparable to localization pose noise (e.g. NDT jitter), so relative error in $v_{pose}$ grows and corrupts the scale-factor observation $z = v_{pose}$. Note that this is about variance, not bias — the projection in step 2 removes the baseline-dependent bias that the displacement norm would carry. Wheel speed reports also tend to have larger relative uncertainty near standstill or creep. In practice, sub-6 m/s segments are often urban and involve frequent acceleration/deceleration, which further degrades consistency between pose-derived and wheel-reported velocity. Default $v_{max} = 17.0\ \mathrm{m/s}$ filters out extreme speeds. Together with $\omega_{max}$, estimation runs mainly on moderate-speed, near-straight segments (~22 km/h and above).
 
   Estimation is intentionally skipped in urban/low-speed segments. Lower `min_speed` if broader coverage is needed, accepting higher estimate variance.
 
@@ -82,13 +92,15 @@ Estimation is performed only when all of the following constraints are satisfied
 
   `ndt_scan_matcher` publishes `initial_to_result_relative_pose`, which is its converged pose expressed in the frame of the initial guess it started from. Its `position.x` is therefore the correction NDT applied _along_ the predicted heading and `position.y` the correction _across_ it. Estimation requires $|x| \leq$ `max_ndt_longitudinal_correction` and $|y| \leq$ `max_ndt_lateral_correction` over the whole pose interval.
 
-  The longitudinal axis is the one that degrades in degenerate environments, and it is also the axis that directly corrupts $v_{pose} = \|\Delta \mathbf{p}\| / \Delta t$, so a large correction there is exactly the condition to reject. Defaults of 0.15 m match the order of the empirical NDT position standard deviation configured in `ndt_scan_matcher` (`output_pose_covariance[0]` = 0.0225, i.e. $\sigma = 0.15\ \mathrm{m}$). The `initial_to_result_distance_tolerance_m` diagnostic threshold (3.0 m by default) is deliberately not reused: it is sized to detect NDT breakdown, not the sub-decimeter jitter that matters here.
+  The longitudinal axis is the one that degrades in degenerate environments, and it is also the axis that directly corrupts $v_{pose}$, so a large correction there is exactly the condition to reject. The correspondence is exact: the initial guess is a predicted `base_link` pose, so the frame the correction is expressed in shares its x-axis with the $\hat{\mathbf{u}}$ that step 2 projects onto. Defaults of 0.15 m match the order of the empirical NDT position standard deviation configured in `ndt_scan_matcher` (`output_pose_covariance[0]` = 0.0225, i.e. $\sigma = 0.15\ \mathrm{m}$). The `initial_to_result_distance_tolerance_m` diagnostic threshold (3.0 m by default) is deliberately not reused: it is sized to detect NDT breakdown, not the sub-decimeter jitter that matters here.
+
+  The vertical component `position.z` is deliberately not gated. It reaches $v_{pose}$ only through $\hat{u}_z = -\sin(\text{pitch})$, so on ordinary grades it is attenuated by more than an order of magnitude, and what remains is zero-mean rather than a bias — the projection in step 2 already removes the one term through which a vertical error would otherwise accumulate systematically.
 
   This constraint is used instead of the `pose_instability_detector` diagnostic. That detector compares the EKF pose against gyro-plus-wheel dead reckoning rather than looking at NDT directly, and its thresholds include `heading_velocity_scale_factor_tolerance` (3 % by default) — so a wheel speed scale error above 3 % would itself trip the detector and gate out precisely the samples needed to estimate that error. `initial_to_result_relative_pose` shares the same initial-pose dependency in principle, but it only accumulates one scan (~0.1 s) of prediction error, roughly 0.05 m at 16 m/s with a 3 % scale error, which stays well inside the 0.15 m threshold.
 
 - **Degenerate environment** (`enable_degenerate_environment_check`, disabled by default)
 
-  `environment_adaptor` publishes `~/debug/environment_id`, and estimation is allowed only when it is contained in `allowed_environment_ids`. With the default `environment_adaptor` configuration, 0 is a normal environment, 1 a uniform road, and 2 a feature-poor road. In a degenerate area NDT slips longitudinally, so $\|\Delta \mathbf{p}\|$ no longer tracks the true traveled distance.
+  `environment_adaptor` publishes `~/debug/environment_id`, and estimation is allowed only when it is contained in `allowed_environment_ids`. With the default `environment_adaptor` configuration, 0 is a normal environment, 1 a uniform road, and 2 a feature-poor road. In a degenerate area NDT slips longitudinally, so $\Delta \mathbf{p} \cdot \hat{\mathbf{u}}$ no longer tracks the true traveled distance.
 
   Two caveats explain the default:
 

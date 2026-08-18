@@ -16,7 +16,7 @@
                 <mxCell id="in_imu" value="IMU batch&#10;rolling buffer (sensor_buffer_duration)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
                     <mxGeometry x="40" y="260" width="200" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="v_pose" value="calc_pose_velocity()&#10;3D distance / dt&#10;skip if dt &gt; max_pose_lag" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
+                <mxCell id="v_pose" value="calc_pose_velocity()&#10;body-axis proj. / dt&#10;skip if dt &gt; max_pose_lag" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
                     <mxGeometry x="320" y="60" width="230" height="80" as="geometry"/>
                 </mxCell>
                 <mxCell id="sync_vel" value="find_nearest_velocity_report()&#10;timestamp sync&#10;(stamp_diff &lt;= max_stamp_lag)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">

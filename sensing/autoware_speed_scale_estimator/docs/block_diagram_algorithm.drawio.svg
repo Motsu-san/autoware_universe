@@ -87,7 +87,7 @@
               <div style="display: inline-block; font-size: 12px; font-family: Helvetica; color: rgb(0, 0, 0); line-height: 1.2; pointer-events: all; white-space: normal; overflow-wrap: normal;">
                 calc_pose_velocity()
                 <br/>
-                3D distance / dt
+                body-axis proj. / dt
                 <br/>
                 skip if dt &gt; max_pose_lag
               </div>
