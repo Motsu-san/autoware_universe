@@ -20,13 +20,13 @@
         },
         "max_stamp_lag": {
           "type": "number",
-          "description": "Maximum allowed absolute timestamp difference between the current pose and the nearest IMU or velocity report sample. Unit is **[s]**.",
+          "description": "Maximum allowed absolute timestamp difference between the current pose and the nearest IMU sample, and between each end of the pose interval and the nearest velocity report or NDT correction sample. Unit is **[s]**.",
           "minimum": 0.0,
           "default": 0.2
         },
         "sensor_buffer_duration": {
           "type": "number",
-          "description": "Duration of the rolling buffer for IMU and velocity report messages used for timestamp synchronization. Unit is **[s]**.",
+          "description": "Duration of the rolling buffer for IMU and velocity report messages used for timestamp synchronization. Must exceed `max_pose_lag` + `max_stamp_lag` so that the whole pose interval stays in the buffer. Unit is **[s]**.",
           "minimum": 0.0,
           "default": 1.0
         },

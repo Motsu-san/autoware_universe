@@ -108,11 +108,11 @@
             <div data-drawio-colors="color: rgb(0, 0, 0); " style="box-sizing: border-box; font-size: 0px; text-align: center;">
               <div
                 style="display: inline-block; font-size: 12px; font-family: Helvetica; color: rgb(0, 0, 0); line-height: 1.2; pointer-events: all; white-space: normal; overflow-wrap: normal;"
-              >find_nearest_velocity_report()<br/>timestamp sync<br/>(stamp_diff &lt;= max_stamp_lag)</div>
+              >calc_mean_velocity_report()<br/>window mean over [t_prev, t_curr]<br/>(both ends within max_stamp_lag)</div>
             </div>
           </div>
         </foreignObject>
-        <text x="395" y="194" fill="rgb(0, 0, 0)" font-family="Helvetica" font-size="12px" text-anchor="middle">find_nearest_velocity_report()...</text>
+        <text x="395" y="194" fill="rgb(0, 0, 0)" font-family="Helvetica" font-size="12px" text-anchor="middle">calc_mean_velocity_report()...</text>
       </switch>
     </g>
     <rect x="280" y="240" width="230" height="80" rx="12" ry="12" fill="#d5e8d4" stroke="#82b366" pointer-events="all"/>

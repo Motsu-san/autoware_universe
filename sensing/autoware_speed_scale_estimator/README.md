@@ -58,6 +58,8 @@ The projection is used instead of the displacement norm $\| \Delta \mathbf{p} \|
 
 All three components of $\Delta \mathbf{p}$ including the vertical one participate, so on a slope this is the speed along the road surface — the same quantity the wheels measure. Reducing this to a horizontal 2D displacement would make the scale factor absorb an average $\cos(\text{gradient})$ over the estimation route (0.12 % on a 5 % grade, 0.50 % on a 10 % grade) and make the estimate route-dependent.
 
+Being a displacement quotient, $v_{pose}$ is the *mean* velocity over $[t_{prev}, t_{curr}]$ rather than the instantaneous velocity at either end. The wheel velocity it is paired with is averaged over the same interval for that reason; see step 3.
+
 If the time difference between the two poses exceeds `max_pose_lag`, the previous pose is reset and estimation is skipped.
 
 ### 3. Timestamp Synchronization
@@ -65,12 +67,16 @@ If the time difference between the two poses exceeds `max_pose_lag`, the previou
 For the current pose timestamp, the estimator selects from the rolling buffers:
 
 - the nearest IMU sample for angular velocity constraint checking
-- the nearest velocity report for Kalman filter observation
 - the nearest environment id, when the degenerate environment constraint is enabled
 
-Estimation is skipped when any of these timestamp differences exceeds `max_stamp_lag`.
+Estimation is skipped when either of these timestamp differences exceeds `max_stamp_lag`.
 
-The NDT correction constraint is not a single-sample lookup: because $v_{pose}$ is derived from both ends of the pose interval, the estimator takes the worst correction over $[t_{prev}, t_{curr}]$ and additionally requires a sample within `max_stamp_lag` of each end, so that the interval is actually covered by the buffer.
+Two quantities are deliberately **not** single-sample lookups, for the same reason: $v_{pose}$ is derived from both ends of the pose interval, so anything paired with it must refer to the same interval $[t_{prev}, t_{curr}]$.
+
+- **Wheel velocity.** $v_{wheel}$ is the time-average of `VelocityReport.longitudinal_velocity` over the interval, computed with the trapezoid rule over the samples inside it plus a linear interpolation at each end. A single sample at $t_{curr}$ would be $v(t_{curr})$ while $v_{pose}$ is $\bar{v} \approx v(t_{mid})$, half an interval earlier, so under a longitudinal acceleration $a$ the ratio carries a bias of $-a \Delta t / (2 v_{wheel})$ — 0.47 % at $a = 0.5\ \mathrm{m/s^2}$, $\Delta t = 0.3\ \mathrm{s}$, $v = 16\ \mathrm{m/s}$, i.e. larger than the 0.1–0.3 % effects this estimator is used to resolve. The bias is systematic rather than zero-mean, because a vehicle on a fixed route accelerates in the same places on every pass; the Kalman filter therefore cannot average it away and it masquerades as a place-dependent scale factor. Averaging over the same interval cancels it for any acceleration profile, which is why no acceleration gate is needed on top of it.
+- **NDT correction.** The estimator takes the worst correction over $[t_{prev}, t_{curr}]$, because a large correction anywhere in between corrupts the observation.
+
+Both additionally require a sample within `max_stamp_lag` of *each* end, so that the interval is actually covered by the buffer. Outside the sampled range the wheel velocity is clamped rather than extrapolated, so a stale buffer cannot invent motion that was never measured. This makes `sensor_buffer_duration` > `max_pose_lag` + `max_stamp_lag` a requirement for the interval to be coverable at all (1.0 > 0.5 + 0.2 by default).
 
 ### 4. Constraint Validation
 
@@ -86,7 +92,7 @@ Estimation is performed only when all of the following constraints are satisfied
 
   Estimation is intentionally skipped in urban/low-speed segments. Lower `min_speed` if broader coverage is needed, accepting higher estimate variance.
 
-- **Wheel velocity validity** — $|v_{wheel}| > 10^{-6}$
+- **Wheel velocity validity** — $|v_{wheel}| > 10^{-6}$ (applied to the interval average defined in step 3, i.e. to the value that actually becomes the observation matrix)
 
 - **NDT scan matching stability** (`enable_ndt_stability_check`, enabled by default)
 
@@ -118,6 +124,15 @@ The scale factor is modeled as a scalar state $x$ with the observation:
 $$
 z = v_{pose} = x \cdot v_{wheel}
 $$
+
+where both sides are means over the same interval:
+
+$$
+v_{pose} = \frac{1}{\Delta t}\int_{t_{prev}}^{t_{curr}} v(\tau)\\,d\tau, \qquad
+v_{wheel} = \frac{1}{\Delta t}\int_{t_{prev}}^{t_{curr}} v_{wheel}(\tau)\\,d\tau
+$$
+
+Because the integral is linear, this is an exact identity whenever $x$ is constant over the interval — it does not require $\dot{v} = 0$, which is what pairing $v_{pose}$ with a point sample would implicitly assume.
 
 Kalman filter update:
 
@@ -167,6 +182,8 @@ $$
 ### Tuning
 
 Default constraint values are a practical starting point, not vehicle-specific optima. If estimation accuracy is insufficient, tune `max_pose_lag`, `max_stamp_lag`, `sensor_buffer_duration`, `max_angular_velocity`, `min_speed`, `max_speed`, and Kalman noise parameters per vehicle and operation. For urban or general-road monitoring, consider lowering `min_speed` and increasing `measurement_noise_covariance` to tolerate noisier pose-differentiation observations. IMU bias cancellation or other preprocessing may allow a stricter angular velocity threshold; without it, thresholds near the IMU noise floor are expected.
+
+Note that `max_stamp_lag` now also bounds how far short of *either* end of the pose interval the velocity report and NDT correction buffers may fall, so `sensor_buffer_duration` must stay above `max_pose_lag` + `max_stamp_lag`. Raising `max_pose_lag` toward `sensor_buffer_duration` will start producing `VelocityReportTimestampMismatch` rejections.
 
 `max_ndt_longitudinal_correction` and `max_ndt_lateral_correction` should be set from the observed distribution of `initial_to_result_relative_pose` (or `initial_to_result_distance`) on the target route. Tightening them improves the quality of each accepted sample but reduces how often estimation runs; if the accepted sample rate drops sharply, relax them rather than lowering `min_speed`. Set `enable_ndt_stability_check` to false to restore the pre-existing behavior of not looking at localization quality at all.
 
