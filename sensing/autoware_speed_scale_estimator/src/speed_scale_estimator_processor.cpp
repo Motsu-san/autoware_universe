@@ -85,7 +85,7 @@ std::string failure_reason_to_string(
         context.time_diff_threshold);
     case UpdateFailureReason::VelocityReportTimestampMismatch:
       return fmt::format(
-        "Velocity report timestamp mismatch, stamp_diff: {:.3f}, threshold: {:.3f}",
+        "Velocity report does not cover the pose interval, stamp_diff: {:.3f}, threshold: {:.3f}",
         context.stamp_diff, context.stamp_diff_threshold);
     case UpdateFailureReason::ImuTimestampMismatch:
       return fmt::format(

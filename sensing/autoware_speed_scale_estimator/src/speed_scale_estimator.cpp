@@ -172,24 +172,34 @@ tl::expected<SpeedScaleEstimatorUpdated, SpeedScaleEstimatorNotUpdated> SpeedSca
   const double v_pose = calc_pose_velocity(pose_prev, pose_curr);
 
   const rclcpp::Time pose_time(pose_curr.header.stamp);
+  const rclcpp::Time pose_prev_time(pose_prev.header.stamp);
 
+  // v_pose is the mean velocity over [t_prev, t_curr], not the instantaneous velocity at t_curr, so
+  // the wheel velocity it is paired with has to be the mean over the same window. A single sample
+  // at t_curr sits half a window later and biases the ratio by -a * dt / (2 * v_wheel), which is
+  // ~0.5 % at 0.5 m/s^2 and 16 m/s and, on a fixed route, repeats in the same places on every pass.
   const std::vector<VelocityReport> buffered_velocity_reports(
     velocity_report_buffer_.begin(), velocity_report_buffer_.end());
-  const auto nearest_velocity_report =
-    find_nearest_velocity_report(buffered_velocity_reports, pose_time);
-  if (!nearest_velocity_report) {
+  const auto mean_velocity_report =
+    calc_mean_velocity_report(buffered_velocity_reports, pose_prev_time, pose_time);
+  if (!mean_velocity_report) {
     return tl::make_unexpected(make_not_updated(UpdateFailureReason::VelocityReportEmpty));
   }
 
-  if (nearest_velocity_report->stamp_diff > parameters_.max_stamp_lag) {
+  // Both ends of the window enter the average, so require the buffer to actually reach them - the
+  // same requirement the NDT correction gate imposes below, for the same reason.
+  if (
+    mean_velocity_report->begin_stamp_diff > parameters_.max_stamp_lag ||
+    mean_velocity_report->end_stamp_diff > parameters_.max_stamp_lag) {
     UpdateFailureContext context;
-    context.stamp_diff = nearest_velocity_report->stamp_diff;
+    context.stamp_diff =
+      std::max(mean_velocity_report->begin_stamp_diff, mean_velocity_report->end_stamp_diff);
     context.stamp_diff_threshold = parameters_.max_stamp_lag;
     return tl::make_unexpected(
       make_not_updated(UpdateFailureReason::VelocityReportTimestampMismatch, context));
   }
 
-  const double v_wheel = nearest_velocity_report->longitudinal_velocity;
+  const double v_wheel = mean_velocity_report->longitudinal_velocity;
 
   const std::vector<Imu> buffered_imus(imu_buffer_.begin(), imu_buffer_.end());
   const auto nearest_imu = find_nearest_imu(buffered_imus, pose_time);
@@ -242,8 +252,8 @@ tl::expected<SpeedScaleEstimatorUpdated, SpeedScaleEstimatorNotUpdated> SpeedSca
   if (parameters_.enable_ndt_stability_check) {
     const std::vector<PoseStamped> buffered_ndt_corrections(
       ndt_correction_buffer_.begin(), ndt_correction_buffer_.end());
-    const auto worst_ndt_correction = find_worst_ndt_correction(
-      buffered_ndt_corrections, rclcpp::Time(pose_prev.header.stamp), pose_time);
+    const auto worst_ndt_correction =
+      find_worst_ndt_correction(buffered_ndt_corrections, pose_prev_time, pose_time);
     if (!worst_ndt_correction) {
       return tl::make_unexpected(make_not_updated(UpdateFailureReason::NdtStabilityUnavailable));
     }

@@ -30,6 +30,12 @@ namespace autoware::speed_scale_estimator
 class UtilsTest : public ::testing::Test
 {
 protected:
+  static rclcpp::Time to_time(double sec)
+  {
+    const auto s = static_cast<int32_t>(sec);
+    return {s, static_cast<uint32_t>((sec - s) * 1e9), RCL_ROS_TIME};
+  }
+
   static Imu create_imu_msg(double sec, double angular_velocity_z)
   {
     Imu msg;
@@ -182,6 +188,137 @@ TEST_F(UtilsTest, CalcPoseVelocityIsNegativeForReverseMotion)
   const PoseStamped pose_b = create_pose_msg(0.1, -1.0, 0.0, 0.0);
 
   EXPECT_NEAR(calc_pose_velocity(pose_a, pose_b), -10.0, 1e-9);
+}
+
+// The tolerance below is 1e-6 rather than 1e-9 because create_velocity_msg and to_time both
+// truncate `(sec - floor(sec)) * 1e9` to whole nanoseconds, and values such as 0.3 land 1 ns short.
+// That perturbs the window width by ~1e-9 s and the mean by a few 1e-9 m/s. Every case here
+// separates its expected value from the wrong answer by at least 0.5 m/s, so 1e-6 discriminates
+// with six orders of magnitude to spare.
+TEST_F(UtilsTest, CalcMeanVelocityReportAveragesLinearRamp)
+{
+  // v(t) = 10.0 + 5.0 t. The mean of a linear ramp over [0.0, 0.3] is its midpoint value, 10.75.
+  // find_nearest_velocity_report at t = 0.3 would return 11.5 instead - a 7 % difference, and
+  // exactly the bias this function exists to remove.
+  const std::vector<VelocityReport> velocity_reports = {
+    create_velocity_msg(0.0, 10.0), create_velocity_msg(0.1, 10.5), create_velocity_msg(0.2, 11.0),
+    create_velocity_msg(0.3, 11.5)};
+
+  const auto result = calc_mean_velocity_report(velocity_reports, to_time(0.0), to_time(0.3));
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_NEAR(result->longitudinal_velocity, 10.75, 1e-6);
+  EXPECT_NEAR(result->begin_longitudinal_velocity, 10.0, 1e-6);
+  EXPECT_NEAR(result->end_longitudinal_velocity, 11.5, 1e-6);
+  EXPECT_NEAR(result->begin_stamp_diff, 0.0, 1e-6);
+  EXPECT_NEAR(result->end_stamp_diff, 0.0, 1e-6);
+}
+
+TEST_F(UtilsTest, CalcMeanVelocityReportInterpolatesWindowEnds)
+{
+  // The window falls strictly between two samples, so the result comes entirely from the endpoint
+  // interpolation: v(0.05) = 12.5 and v(0.10) = 15.0, giving 13.75. The window is deliberately
+  // asymmetric so that snapping either end to its nearest sample (which would give 10.0) cannot
+  // coincide with the correct answer.
+  const std::vector<VelocityReport> velocity_reports = {
+    create_velocity_msg(0.0, 10.0), create_velocity_msg(0.2, 20.0)};
+
+  const auto result = calc_mean_velocity_report(velocity_reports, to_time(0.05), to_time(0.10));
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_NEAR(result->longitudinal_velocity, 13.75, 1e-6);
+  EXPECT_NEAR(result->begin_longitudinal_velocity, 12.5, 1e-6);
+  EXPECT_NEAR(result->end_longitudinal_velocity, 15.0, 1e-6);
+  EXPECT_NEAR(result->begin_stamp_diff, 0.05, 1e-6);
+  EXPECT_NEAR(result->end_stamp_diff, 0.10, 1e-6);
+}
+
+TEST_F(UtilsTest, CalcMeanVelocityReportClampsOutsideSampleRange)
+{
+  // The window extends past both ends of the buffer. Clamping holds 8.0 over [0.0, 0.2] and 12.0
+  // over [0.3, 0.4], giving (0.2*8.0 + 0.1*10.0 + 0.1*12.0) / 0.4 = 9.5. Linear extrapolation
+  // would invent v(0.0) = 0.0 and v(0.4) = 16.0 and return 8.0, i.e. motion that was never
+  // measured. The stamp differences are what lets the caller reject this window outright.
+  const std::vector<VelocityReport> velocity_reports = {
+    create_velocity_msg(0.2, 8.0), create_velocity_msg(0.3, 12.0)};
+
+  const auto result = calc_mean_velocity_report(velocity_reports, to_time(0.0), to_time(0.4));
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_NEAR(result->longitudinal_velocity, 9.5, 1e-6);
+  EXPECT_NEAR(result->begin_longitudinal_velocity, 8.0, 1e-6);
+  EXPECT_NEAR(result->end_longitudinal_velocity, 12.0, 1e-6);
+  EXPECT_NEAR(result->begin_stamp_diff, 0.2, 1e-6);
+  EXPECT_NEAR(result->end_stamp_diff, 0.1, 1e-6);
+}
+
+TEST_F(UtilsTest, CalcMeanVelocityReportWithSingleSampleReturnsThatSample)
+{
+  // Clamped at both ends, so the average degrades exactly to the old point-sample behaviour. This
+  // is the path the estimator takes when a timer tick brings no new velocity report.
+  const std::vector<VelocityReport> velocity_reports = {create_velocity_msg(0.2, 9.0)};
+
+  const auto result = calc_mean_velocity_report(velocity_reports, to_time(0.0), to_time(0.4));
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_NEAR(result->longitudinal_velocity, 9.0, 1e-6);
+  EXPECT_NEAR(result->begin_stamp_diff, 0.2, 1e-6);
+  EXPECT_NEAR(result->end_stamp_diff, 0.2, 1e-6);
+}
+
+TEST_F(UtilsTest, CalcMeanVelocityReportMatchesPointSampleAtConstantSpeed)
+{
+  // At constant speed the window mean and the point sample agree, so the fix is a no-op there and
+  // only changes what the estimator sees while the vehicle accelerates.
+  const std::vector<VelocityReport> velocity_reports = {
+    create_velocity_msg(0.0, 12.0), create_velocity_msg(0.1, 12.0), create_velocity_msg(0.2, 12.0),
+    create_velocity_msg(0.3, 12.0), create_velocity_msg(0.4, 12.0), create_velocity_msg(0.5, 12.0)};
+
+  const auto result = calc_mean_velocity_report(velocity_reports, to_time(0.1), to_time(0.4));
+  const auto nearest = find_nearest_velocity_report(velocity_reports, to_time(0.4));
+
+  ASSERT_TRUE(result.has_value());
+  ASSERT_TRUE(nearest.has_value());
+  EXPECT_NEAR(result->longitudinal_velocity, 12.0, 1e-6);
+  EXPECT_NEAR(result->longitudinal_velocity, nearest->longitudinal_velocity, 1e-6);
+}
+
+TEST_F(UtilsTest, CalcMeanVelocityReportWithDegenerateWindowFallsBackToWindowEnd)
+{
+  // A zero-width window has no interval to average. Returning the limit of the average as the
+  // window shrinks keeps the value finite; a NaN here would propagate through the Kalman gain into
+  // the covariance and no later update could recover from it.
+  const std::vector<VelocityReport> velocity_reports = {
+    create_velocity_msg(0.0, 10.0), create_velocity_msg(0.2, 20.0)};
+
+  const auto result = calc_mean_velocity_report(velocity_reports, to_time(0.1), to_time(0.1));
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_TRUE(std::isfinite(result->longitudinal_velocity));
+  EXPECT_NEAR(result->longitudinal_velocity, 15.0, 1e-6);
+}
+
+TEST_F(UtilsTest, CalcMeanVelocityReportIgnoresDuplicateStamps)
+{
+  // A repeated stamp would contribute a zero-width trapezoid, and a stamp that goes backwards a
+  // negative-width one, which can flip the sign of the mean and therefore of the observation
+  // matrix. The result must match the duplicate-free sequence exactly.
+  const std::vector<VelocityReport> velocity_reports = {
+    create_velocity_msg(0.1, 10.0), create_velocity_msg(0.1, 10.0), create_velocity_msg(0.2, 12.0)};
+
+  const auto result = calc_mean_velocity_report(velocity_reports, to_time(0.0), to_time(0.2));
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_NEAR(result->longitudinal_velocity, 10.5, 1e-6);
+}
+
+TEST_F(UtilsTest, CalcMeanVelocityReportReturnsNulloptForEmptyInput)
+{
+  const std::vector<VelocityReport> velocity_reports;
+
+  const auto result = calc_mean_velocity_report(velocity_reports, to_time(0.0), to_time(0.3));
+
+  EXPECT_FALSE(result.has_value());
 }
 
 }  // namespace autoware::speed_scale_estimator

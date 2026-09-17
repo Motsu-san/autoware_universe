@@ -249,6 +249,85 @@ TEST_F(SpeedScaleEstimatorTest, SensorBufferRetentionAcrossUpdates)
   ASSERT_TRUE(result);
 }
 
+TEST_F(SpeedScaleEstimatorTest, WheelVelocityIsAveragedOverPoseInterval)
+{
+  // v(t) = 10.0 + 5.0 t, x(t) = 10.0 t + 2.5 t^2. Over [0.0, 0.2] the pose velocity is
+  // x(0.2) / 0.2 = 10.5 m/s, i.e. v at the window midpoint. The wheel sample at t = 0.2 is
+  // 11.0 m/s, so pairing the two would report a scale factor of 10.5 / 11.0 = 0.9545 for a
+  // vehicle whose wheel speed is in fact exact. Averaging over the window makes the innovation
+  // exactly zero, so the estimate stays at 1.0 regardless of the Kalman gain.
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 10.0)},
+    {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.2, 2.1, 0.0)}, {create_imu_msg(0.2, 0.005)},
+    {create_velocity_msg(0.05, 10.25), create_velocity_msg(0.1, 10.5),
+     create_velocity_msg(0.15, 10.75), create_velocity_msg(0.2, 11.0)},
+    {create_ndt_correction_msg(0.2, 0.0, 0.0)}, {});
+
+  ASSERT_TRUE(result);
+  EXPECT_NEAR(result.value().velocity_from_pose, 10.5, 1e-6);
+  EXPECT_NEAR(result.value().velocity_from_wheel, 10.5, 1e-6);
+  EXPECT_NEAR(result.value().estimated_speed_scale_factor, 1.0, 1e-6);
+}
+
+TEST_F(SpeedScaleEstimatorTest, WheelVelocityAverageIncludesSamplesInsidePoseInterval)
+{
+  // Both ends of the interval read 10.0 m/s; only the sample in between is different, so a lookup
+  // at either end cannot see the motion that actually produced the displacement. This mirrors
+  // NdtCorrectionUsesWorstSampleWithinPoseInterval for the wheel velocity.
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 10.0)},
+    {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.2, 2.4, 0.0)}, {create_imu_msg(0.2, 0.005)},
+    {create_velocity_msg(0.1, 14.0), create_velocity_msg(0.2, 10.0)},
+    {create_ndt_correction_msg(0.2, 0.0, 0.0)}, {});
+
+  ASSERT_TRUE(result);
+  EXPECT_NEAR(result.value().velocity_from_wheel, 12.0, 1e-6);
+  EXPECT_NEAR(result.value().estimated_speed_scale_factor, 1.0, 1e-6);
+}
+
+TEST_F(SpeedScaleEstimatorTest, VelocityReportDoesNotCoverPoseIntervalBegin)
+{
+  // Only the far end of the interval has a wheel sample, so the average would be a clamped hold
+  // over 0.4 s rather than a measurement of the interval the pose velocity came from. The seeding
+  // call has to carry a velocity report because the empty-buffer check precedes the previous-pose
+  // latch, so an empty velocity list would never latch the pose at all.
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.4, 10.0)},
+    {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.4, 4.0, 0.0)}, {create_imu_msg(0.4, 0.005)},
+    {create_velocity_msg(0.4, 10.0)},
+    {create_ndt_correction_msg(0.2, 0.0, 0.0), create_ndt_correction_msg(0.4, 0.0, 0.0)}, {});
+
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().reason, UpdateFailureReason::VelocityReportTimestampMismatch);
+  EXPECT_NEAR(result.error().context.stamp_diff, 0.4, 1e-6);
+  EXPECT_DOUBLE_EQ(result.error().context.stamp_diff_threshold, parameters_.max_stamp_lag);
+}
+
+TEST_F(SpeedScaleEstimatorTest, VelocityReportDoesNotCoverPoseIntervalEnd)
+{
+  // Symmetric to the previous case: the buffer only reaches the beginning of the interval.
+  (void)estimator_->update(
+    {create_pose_msg(0.0, 0.0, 0.0)}, {create_imu_msg(0.0, 0.0)}, {create_velocity_msg(0.0, 10.0)},
+    {create_ndt_correction_msg(0.0, 0.0, 0.0)}, {});
+
+  const auto result = estimator_->update(
+    {create_pose_msg(0.4, 4.0, 0.0)}, {create_imu_msg(0.4, 0.005)}, {},
+    {create_ndt_correction_msg(0.2, 0.0, 0.0), create_ndt_correction_msg(0.4, 0.0, 0.0)}, {});
+
+  ASSERT_FALSE(result);
+  EXPECT_EQ(result.error().reason, UpdateFailureReason::VelocityReportTimestampMismatch);
+  EXPECT_NEAR(result.error().context.stamp_diff, 0.4, 1e-6);
+}
+
 TEST_F(SpeedScaleEstimatorTest, EmptyDataHandling)
 {
   std::vector<PoseStamped> poses = {create_pose_msg(1.0, 0.0, 0.0)};

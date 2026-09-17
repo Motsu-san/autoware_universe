@@ -35,6 +35,48 @@ std::array<double, 3> body_x_axis(const geometry_msgs::msg::Quaternion & q)
     2.0 * (q.x * q.z - q.w * q.y)};
 }
 
+/// Linear interpolation of the reported longitudinal velocity at `target_time`.
+///
+/// Clamped rather than extrapolated outside the sampled range. A zero-order hold has an error
+/// bounded by the size of the gap, whereas an extrapolation from a stale buffer grows without
+/// limit and would let a missing-data condition pass the gates as a plausible velocity. The caller
+/// rejects gaps larger than max_stamp_lag, so the clamp is only ever exercised inside that bound.
+///
+/// @pre `velocity_reports` is not empty.
+double interpolate_longitudinal_velocity(
+  const std::vector<VelocityReport> & velocity_reports, const rclcpp::Time & target_time)
+{
+  const VelocityReport * lower = nullptr;  // latest sample at or before target_time
+  const VelocityReport * upper = nullptr;  // earliest sample at or after target_time
+
+  for (const auto & velocity_report : velocity_reports) {
+    const rclcpp::Time stamp(velocity_report.header.stamp);
+    if (stamp <= target_time && (lower == nullptr || rclcpp::Time(lower->header.stamp) < stamp)) {
+      lower = &velocity_report;
+    }
+    if (target_time <= stamp && (upper == nullptr || stamp < rclcpp::Time(upper->header.stamp))) {
+      upper = &velocity_report;
+    }
+  }
+
+  if (lower == nullptr) {
+    return static_cast<double>(upper->longitudinal_velocity);  // before the first sample: clamp
+  }
+  if (upper == nullptr) {
+    return static_cast<double>(lower->longitudinal_velocity);  // after the last sample: clamp
+  }
+
+  const rclcpp::Time lower_stamp(lower->header.stamp);
+  const double span = (rclcpp::Time(upper->header.stamp) - lower_stamp).seconds();
+  if (span < std::numeric_limits<double>::epsilon()) {
+    return static_cast<double>(lower->longitudinal_velocity);  // a sample sits on target_time
+  }
+
+  const double ratio = (target_time - lower_stamp).seconds() / span;
+  return (1.0 - ratio) * static_cast<double>(lower->longitudinal_velocity) +
+         ratio * static_cast<double>(upper->longitudinal_velocity);
+}
+
 }  // namespace
 
 double calc_time_diff(const PoseStamped & pose_a, const PoseStamped & pose_b)
@@ -207,6 +249,68 @@ std::optional<WorstNdtCorrectionSample> find_worst_ndt_correction(
   sample.lateral = worst_lateral;
   sample.begin_stamp_diff = min_begin_stamp_diff;
   sample.end_stamp_diff = min_end_stamp_diff;
+  return sample;
+}
+
+std::optional<MeanVelocityReportSample> calc_mean_velocity_report(
+  const std::vector<VelocityReport> & velocity_reports, const rclcpp::Time & begin_time,
+  const rclcpp::Time & end_time)
+{
+  if (velocity_reports.empty()) {
+    return std::nullopt;
+  }
+
+  // Times are carried as offsets from begin_time so that the trapezoid widths, which are ~0.01 s,
+  // never lose significance against epoch-scale absolute timestamps.
+  const double duration = (end_time - begin_time).seconds();
+
+  MeanVelocityReportSample sample;
+  sample.begin_longitudinal_velocity =
+    interpolate_longitudinal_velocity(velocity_reports, begin_time);
+  sample.end_longitudinal_velocity = interpolate_longitudinal_velocity(velocity_reports, end_time);
+
+  // Safe to seed with max(): the empty case returned above, so the loop runs at least once.
+  double min_begin_stamp_diff = std::numeric_limits<double>::max();
+  double min_end_stamp_diff = std::numeric_limits<double>::max();
+
+  double integral = 0.0;
+  double last_time = 0.0;
+  double last_velocity = sample.begin_longitudinal_velocity;
+
+  for (const auto & velocity_report : velocity_reports) {
+    const double time = (rclcpp::Time(velocity_report.header.stamp) - begin_time).seconds();
+
+    min_begin_stamp_diff = std::min(min_begin_stamp_diff, std::abs(time));
+    min_end_stamp_diff = std::min(min_end_stamp_diff, std::abs(time - duration));
+
+    // Only samples strictly inside the window contribute; both ends come from the interpolation
+    // instead. `time <= last_time` additionally drops duplicated and out-of-order stamps, which
+    // would otherwise contribute a negative-width trapezoid and could flip the sign of the mean.
+    if (time <= last_time || duration <= time) {
+      continue;
+    }
+
+    const double velocity = static_cast<double>(velocity_report.longitudinal_velocity);
+    integral += 0.5 * (last_velocity + velocity) * (time - last_time);
+    last_time = time;
+    last_velocity = velocity;
+  }
+
+  sample.begin_stamp_diff = min_begin_stamp_diff;
+  sample.end_stamp_diff = min_end_stamp_diff;
+
+  // A degenerate window has no interval to average over, so fall back to the value at its end,
+  // which is the limit of the average as the window shrinks. calc_pose_velocity returns 0.0 for
+  // the same input, so the min_speed constraint rejects the sample either way; returning a finite
+  // value rather than NaN keeps the downstream gates comparing numbers instead of propagating NaN
+  // into the Kalman gain and the covariance, which no later update could recover from.
+  if (duration < std::numeric_limits<double>::epsilon()) {
+    sample.longitudinal_velocity = sample.end_longitudinal_velocity;
+    return sample;
+  }
+
+  integral += 0.5 * (last_velocity + sample.end_longitudinal_velocity) * (duration - last_time);
+  sample.longitudinal_velocity = integral / duration;
   return sample;
 }
 

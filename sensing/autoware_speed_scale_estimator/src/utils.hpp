@@ -46,6 +46,23 @@ struct NearestVelocityReportSample
   double stamp_diff{};             //!< Absolute time difference from target [s]
 };
 
+/**
+ * @brief Wheel velocity time-averaged over a window, together with how well the buffer covers it.
+ *
+ * Mirrors WorstNdtCorrectionSample: the value is aggregated over the whole window, and the two
+ * stamp differences let the caller reject windows the buffer does not actually cover. The
+ * interpolated endpoint values are reported as well so that the caller can derive the longitudinal
+ * acceleration for diagnostics without a second scan of the buffer.
+ */
+struct MeanVelocityReportSample
+{
+  double longitudinal_velocity{};        //!< Time-average over the window [m/s]
+  double begin_longitudinal_velocity{};  //!< Interpolated value at the window begin [m/s]
+  double end_longitudinal_velocity{};    //!< Interpolated value at the window end [m/s]
+  double begin_stamp_diff{};             //!< Time difference to the sample nearest the begin [s]
+  double end_stamp_diff{};               //!< Time difference to the sample nearest the end [s]
+};
+
 struct NearestEnvironmentIdSample
 {
   int32_t environment_id{};  //!< Environment id reported by environment_adaptor
@@ -102,6 +119,38 @@ struct WorstNdtCorrectionSample
  */
 [[nodiscard]] std::optional<WorstNdtCorrectionSample> find_worst_ndt_correction(
   const std::vector<PoseStamped> & ndt_corrections, const rclcpp::Time & begin_time,
+  const rclcpp::Time & end_time);
+
+/**
+ * @brief Wheel velocity averaged over [begin_time, end_time].
+ *
+ * The pose velocity this is compared against is a displacement divided by the interval, i.e. the
+ * MEAN velocity over [t_prev, t_curr], not the instantaneous velocity at either end. Pairing it
+ * with the single wheel sample nearest t_curr compares two quantities half an interval apart, so
+ * under a longitudinal acceleration a the ratio carries a bias of -a * dt / (2 * v_wheel): 0.47 %
+ * at a = 0.5 m/s^2, dt = 0.3 s, v = 16 m/s, i.e. larger than the 0.1-0.3 % effects the scale
+ * factor is used to resolve. The bias is systematic rather than zero-mean, because a vehicle on a
+ * fixed route accelerates in the same places on every pass, so the Kalman filter cannot average it
+ * away and it masquerades as a place-dependent scale factor. Averaging the wheel velocity over the
+ * same interval makes z = x * v_wheel an identity for any constant x and any acceleration profile,
+ * which is why no acceleration gate is needed on top of it.
+ *
+ * The average is the trapezoid rule over the samples strictly inside the window plus a linear
+ * interpolation at each end. Outside the sampled range the interpolation is clamped rather than
+ * extrapolated, so a stale buffer cannot invent motion that was never measured; the returned stamp
+ * differences let the caller reject such windows, the same contract as find_worst_ndt_correction().
+ *
+ * A window of non-positive width has no interval to average over, so the value interpolated at
+ * end_time is returned instead. That is the limit of the average as the window shrinks, and unlike
+ * a NaN it cannot propagate into the Kalman gain and poison the recursive estimate; the pose
+ * velocity is zero or negative for the same input, so the min_speed constraint rejects it anyway.
+ *
+ * @pre `velocity_reports` is sorted ascending by stamp, which the rolling buffer guarantees by
+ *   dropping out-of-order inserts. Samples that go backwards are skipped rather than integrated
+ *   with a negative width, but the result for unsorted input is not meaningful.
+ */
+[[nodiscard]] std::optional<MeanVelocityReportSample> calc_mean_velocity_report(
+  const std::vector<VelocityReport> & velocity_reports, const rclcpp::Time & begin_time,
   const rclcpp::Time & end_time);
 
 }  // namespace autoware::speed_scale_estimator
