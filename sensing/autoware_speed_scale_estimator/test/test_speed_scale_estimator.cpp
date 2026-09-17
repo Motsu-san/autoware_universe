@@ -270,6 +270,8 @@ TEST_F(SpeedScaleEstimatorTest, WheelVelocityIsAveragedOverPoseInterval)
   EXPECT_NEAR(result.value().velocity_from_pose, 10.5, 1e-6);
   EXPECT_NEAR(result.value().velocity_from_wheel, 10.5, 1e-6);
   EXPECT_NEAR(result.value().estimated_speed_scale_factor, 1.0, 1e-6);
+  EXPECT_NEAR(result.value().velocity_from_wheel_point, 11.0, 1e-6);
+  EXPECT_NEAR(result.value().longitudinal_acceleration, 5.0, 1e-4);
 }
 
 TEST_F(SpeedScaleEstimatorTest, WheelVelocityAverageIncludesSamplesInsidePoseInterval)

@@ -87,6 +87,13 @@ struct SpeedScaleEstimatorUpdated
   double ndt_longitudinal_correction = 0.0;
   double ndt_lateral_correction = 0.0;
   int32_t environment_id = 0;
+  //!< Wheel velocity sampled at t_curr only. Diagnostics: this is what the observation used to be
+  //!< paired with, so recording it alongside velocity_from_wheel makes the window-averaging
+  //!< correction verifiable straight from a recorded debug_info stream.
+  double velocity_from_wheel_point = 0.0;
+  //!< (v_wheel(t_curr) - v_wheel(t_prev)) / dt [m/s^2]. Drives the difference between the two
+  //!< wheel velocities above, and is the quantity a future acceleration gate would threshold.
+  double longitudinal_acceleration = 0.0;
 };
 
 struct SpeedScaleEstimatorNotUpdated

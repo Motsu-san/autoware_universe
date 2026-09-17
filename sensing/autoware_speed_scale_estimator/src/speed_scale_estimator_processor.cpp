@@ -171,11 +171,13 @@ StringStamped SpeedScaleEstimatorProcessor::make_debug_info(
     const auto & updated = result.estimation_result.value();
     debug_info.data = fmt::format(
       "Updated:\nEstimated speed scale factor: {}\nStd. dev.: {}\nVelocity from pose: "
-      "{}\nVelocity from wheel: {}\nKalman gain: {}\nNDT correction (longitudinal, lateral): ({}, "
+      "{}\nVelocity from wheel: {}\nVelocity from wheel (point sample): {}\nLongitudinal "
+      "acceleration: {}\nKalman gain: {}\nNDT correction (longitudinal, lateral): ({}, "
       "{})\nEnvironment id: {}",
       updated.estimated_speed_scale_factor, std::sqrt(updated.covariance),
-      updated.velocity_from_pose, updated.velocity_from_wheel, updated.kalman_gain,
-      updated.ndt_longitudinal_correction, updated.ndt_lateral_correction, updated.environment_id);
+      updated.velocity_from_pose, updated.velocity_from_wheel, updated.velocity_from_wheel_point,
+      updated.longitudinal_acceleration, updated.kalman_gain, updated.ndt_longitudinal_correction,
+      updated.ndt_lateral_correction, updated.environment_id);
   }
 
   return debug_info;

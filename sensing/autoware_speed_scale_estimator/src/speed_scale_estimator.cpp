@@ -201,6 +201,17 @@ tl::expected<SpeedScaleEstimatorUpdated, SpeedScaleEstimatorNotUpdated> SpeedSca
 
   const double v_wheel = mean_velocity_report->longitudinal_velocity;
 
+  // Diagnostics only. The point sample is what the observation used to take, so publishing both
+  // makes the correction verifiable straight from debug_info; the acceleration is what drove the
+  // difference between them.
+  const auto nearest_velocity_report =
+    find_nearest_velocity_report(buffered_velocity_reports, pose_time);
+  const double v_wheel_point =
+    nearest_velocity_report ? nearest_velocity_report->longitudinal_velocity : v_wheel;
+  const double longitudinal_acceleration = (mean_velocity_report->end_longitudinal_velocity -
+                                            mean_velocity_report->begin_longitudinal_velocity) /
+                                           time_diff;
+
   const std::vector<Imu> buffered_imus(imu_buffer_.begin(), imu_buffer_.end());
   const auto nearest_imu = find_nearest_imu(buffered_imus, pose_time);
   if (!nearest_imu) {
@@ -341,6 +352,8 @@ tl::expected<SpeedScaleEstimatorUpdated, SpeedScaleEstimatorNotUpdated> SpeedSca
   result.ndt_longitudinal_correction = ndt_longitudinal_correction;
   result.ndt_lateral_correction = ndt_lateral_correction;
   result.environment_id = environment_id;
+  result.velocity_from_wheel_point = v_wheel_point;
+  result.longitudinal_acceleration = longitudinal_acceleration;
 
   return result;
 }
